@@ -13,6 +13,7 @@ import KunchinintuLedger from './pages/KunchinintuLedger';
 import Hamali from './pages/Hamali';
 import AddPurchaseRate from './pages/AddPurchaseRate';
 import HamaliBookSimple from './pages/HamaliBookSimple';
+import UserManagement from './pages/UserManagement';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import './globalNotification.css';
@@ -113,6 +114,16 @@ const AppContent: React.FC = () => {
               <ProtectedRoute roles={['manager', 'admin']}>
                 <Layout>
                   <HamaliBookSimple />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <ProtectedRoute roles={['admin']}>
+                <Layout>
+                  <UserManagement />
                 </Layout>
               </ProtectedRoute>
             }

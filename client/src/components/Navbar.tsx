@@ -32,7 +32,7 @@ const NavLinks = styled.div`
   align-items: center;
 `;
 
-const NavLink = styled(Link)<{ $active: boolean }>`
+const NavLink = styled(Link) <{ $active: boolean }>`
   color: white;
   text-decoration: none;
   padding: 0.5rem 1rem;
@@ -133,7 +133,7 @@ const Navbar: React.FC = () => {
   useEffect(() => {
     if (user && (user.role === 'manager' || user.role === 'admin')) {
       fetchPendingCount();
-      
+
       // Poll every 30 seconds for updates
       const interval = setInterval(() => {
         fetchPendingCount();
@@ -203,6 +203,11 @@ const Navbar: React.FC = () => {
                 </ApprovalButton>
               )}
             </>
+          )}
+          {user && user.role === 'admin' && (
+            <NavLink to="/admin/users" $active={isActive('/admin/users')}>
+              👥 Users
+            </NavLink>
           )}
           <UserInfo>
             <UserBadge>{user?.role}</UserBadge>

@@ -31,6 +31,7 @@ const metricsRoutes = require('./routes/metrics');
 const riceStockRoutes = require('./routes/rice-stock');
 const riceStockManagementRoutes = require('./routes/riceStockManagement');
 const yieldRoutes = require('./routes/yield');
+const adminUsersRoutes = require('./routes/admin-users');
 
 const compression = require('compression');
 const performanceMonitor = require('./middleware/performanceMonitor');
@@ -136,6 +137,8 @@ app.use('/api/metrics', metricsRoutes);
 app.use('/api/rice-stock', riceStockRoutes);
 app.use('/api/rice-stock-management', riceStockManagementRoutes);
 app.use('/api/yield', yieldRoutes);
+app.use('/api/admin', adminUsersRoutes);
+
 
 // Health check
 app.get('/api/health', async (req, res) => {
