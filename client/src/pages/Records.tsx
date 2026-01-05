@@ -1642,9 +1642,13 @@ const Records: React.FC = () => {
 
         // COMPREHENSIVE REFRESH: Refresh ALL data sources to ensure perfect sync
         // This ensures edits (date, type, bags changes) reflect properly across all tabs
-        fetchRiceStock();
-        fetchProductionRecords();
-        fetchOutturns(); // Refresh outturns list for Outturn Report tab
+        fetchRiceStock();           // Refresh Rice Stock tab
+        fetchProductionRecords();   // Refresh Production Shifting records
+        fetchOutturns();            // Refresh outturns list for Outturn Report tab
+        fetchByProducts();          // Refresh By-Products records
+        fetchRecords();             // Refresh main records (affects all tabs)
+
+        // Note: Available bags will auto-refresh via useEffect when productionRecords changes
       } else {
         toast.error(data.error || 'Failed to update movement');
       }
