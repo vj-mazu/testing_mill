@@ -170,6 +170,164 @@ router.get('/movements', auth, async (req, res) => {
     }
 });
 
+// GET RICE OPENING BALANCE - Calculate stock totals before a given date
+router.get('/opening-balance', auth, async (req, res) => {
+    const startTime = Date.now();
+
+    try {
+        const { beforeDate } = req.query;
+
+        if (!beforeDate) {
+            return res.status(400).json({ error: 'beforeDate is required (format: YYYY-MM-DD)' });
+        }
+
+        console.log(`📊 Calculating rice opening balance before ${beforeDate}...`);
+
+        // RICE STOCK: Calculate net stock by variety, product_type, brand_name, and location
+        // We need to combine data from rice_productions and rice_stock_movements
+        const riceStockQuery = `
+            WITH movement_sums AS (
+                -- Sum from rice_stock_movements
+                SELECT 
+                    variety,
+                    product_type,
+                    packaging_id,
+                    location_code,
+                    SUM(CASE 
+                        WHEN movement_type = 'purchase' THEN bags 
+                        WHEN movement_type = 'sale' THEN -bags
+                        ELSE 0
+                    END) as movement_bags,
+                    SUM(CASE 
+                        WHEN movement_type = 'purchase' THEN quantity_quintals 
+                        WHEN movement_type = 'sale' THEN -quantity_quintals
+                        ELSE 0
+                    END) as movement_qtls
+                FROM rice_stock_movements
+                WHERE date < :beforeDate
+                  AND status = 'approved'
+                GROUP BY variety, product_type, packaging_id, location_code
+                
+                UNION ALL
+                
+                -- Sum Target bags from Palti
+                SELECT 
+                    variety,
+                    product_type,
+                    target_packaging_id as packaging_id,
+                    location_code,
+                    SUM(bags) as movement_bags,
+                    SUM(quantity_quintals) as movement_qtls
+                FROM rice_stock_movements
+                WHERE date < :beforeDate
+                  AND status = 'approved'
+                  AND movement_type = 'palti'
+                GROUP BY variety, product_type, target_packaging_id, location_code
+                
+                UNION ALL
+                
+                -- Subtract Source bags from Palti
+                SELECT 
+                    variety,
+                    product_type,
+                    source_packaging_id as packaging_id,
+                    location_code,
+                    -SUM(CASE 
+                        WHEN conversion_shortage_bags IS NOT NULL THEN (bags + conversion_shortage_bags)
+                        ELSE bags
+                     END) as movement_bags,
+                    -SUM(CASE 
+                        WHEN conversion_shortage_kg IS NOT NULL THEN (quantity_quintals + (conversion_shortage_kg/100))
+                        ELSE quantity_quintals
+                     END) as movement_qtls
+                FROM rice_stock_movements
+                WHERE date < :beforeDate
+                  AND status = 'approved'
+                  AND movement_type = 'palti'
+                GROUP BY variety, product_type, source_packaging_id, location_code
+                
+                UNION ALL
+                
+                -- Sum from rice_productions
+                SELECT 
+                    o."allottedVariety" as variety,
+                    rp."productType" as product_type,
+                    rp."packagingId" as packaging_id,
+                    rp."locationCode" as location_code,
+                    SUM(rp.bags) as movement_bags,
+                    SUM(rp."quantityQuintals") as movement_qtls
+                FROM rice_productions rp
+                JOIN outturns o ON rp."outturnId" = o.id
+                WHERE rp.date < :beforeDate
+                  AND rp.status = 'approved'
+                GROUP BY o."allottedVariety", rp."productType", rp."packagingId", rp."locationCode"
+            )
+            SELECT 
+                ms.variety,
+                ms.product_type,
+                ms.location_code as "locationCode",
+                p."brandName" as "brandName",
+                SUM(ms.movement_bags) as bags,
+                SUM(ms.movement_qtls) as quintals
+            FROM movement_sums ms
+            LEFT JOIN packagings p ON ms.packaging_id = p.id
+            GROUP BY ms.variety, ms.product_type, ms.location_code, p."brandName"
+            HAVING SUM(ms.movement_bags) != 0 OR SUM(ms.movement_qtls) != 0
+        `;
+
+        const stockBalances = await sequelize.query(riceStockQuery, {
+            replacements: { beforeDate },
+            type: sequelize.QueryTypes.SELECT
+        });
+
+        const balances = {};
+        stockBalances.forEach(row => {
+            // Match frontend category logic
+            let category = 'Other';
+            const productType = row.product_type;
+            const productLower = (productType || '').toLowerCase();
+
+            if (productType === 'Rice') category = 'Rice';
+            else if (productType === 'Bran') category = 'Bran';
+            else if (productLower.includes('unpolish')) category = 'Unpolish';
+            else if (productLower.includes('faram')) category = 'Faram';
+            else if (productLower.includes('zero broken') || productLower.includes('0 broken')) category = '0 Broken';
+            else if (productLower.includes('sizer broken')) category = 'Sizer Broken';
+            else if (productLower.includes('rejection broken')) category = 'Sizer Broken';
+            else if (productLower.includes('rj rice 1')) category = 'RJ Rice 1';
+            else if (productLower.includes('rj rice 2') || productLower.includes('rj rice (2)')) category = 'RJ Rice (2)';
+            else if (productLower.includes('rj broken')) category = 'RJ Broken';
+            else if (productLower.includes('broken')) category = 'Broken';
+            else if (productLower.includes('rice') || productLower.includes('rj rice')) category = 'Rice';
+            else if (productLower.includes('bran')) category = 'Bran';
+
+            const brandName = row.brandName || 'Unknown';
+            const key = `${row.variety}|${row.locationCode}|${category}|${brandName}`;
+
+            balances[key] = {
+                variety: row.variety,
+                category: category,
+                brandName: brandName,
+                locationCode: row.locationCode,
+                bags: parseInt(row.bags) || 0,
+                quintals: parseFloat(row.quintals) || 0
+            };
+        });
+
+        const responseTime = Date.now() - startTime;
+        res.json({
+            beforeDate,
+            balances,
+            performance: {
+                responseTime: `${responseTime}ms`
+            }
+        });
+    } catch (error) {
+        console.error('Error calculating rice opening balance:', error);
+        res.status(500).json({ error: 'Failed to calculate rice opening balance' });
+    }
+});
+
 // Get pending rice stock movements (for admin approval)
 router.get('/movements/pending', auth, async (req, res) => {
     try {

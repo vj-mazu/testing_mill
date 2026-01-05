@@ -1627,9 +1627,12 @@ const Records: React.FC = () => {
       if (data.success || data.message || data.production) {
         toast.success('Rice movement updated successfully');
         setEditingRiceMovement(null);
-        // Refresh data from both sources
+
+        // COMPREHENSIVE REFRESH: Refresh ALL data sources to ensure perfect sync
+        // This ensures edits (date, type, bags changes) reflect properly across all tabs
         fetchRiceStock();
         fetchProductionRecords();
+        fetchOutturns(); // Refresh outturns list for Outturn Report tab
       } else {
         toast.error(data.error || 'Failed to update movement');
       }
@@ -5770,8 +5773,8 @@ const Records: React.FC = () => {
                   const openingProductionShifting: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } } = {};
 
                   // IMPORTANT: If we have pre-fetched historical balance from API, use it as base
-                  // This is critical when date filter is applied (e.g., viewing Feb only)
-                  if (historicalOpeningBalance && dateFrom) {
+                  // This is critical when date filter OR month filter is applied (e.g., viewing Feb only)
+                  if (historicalOpeningBalance && (dateFrom || selectedMonth)) {
                     // Pre-populate warehouse opening stock from API
                     Object.entries(historicalOpeningBalance.warehouseBalance).forEach(([key, value]) => {
                       openingStockByKey[key] = {

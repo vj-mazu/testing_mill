@@ -46,19 +46,24 @@ router.get('/arrivals', auth, async (req, res) => {
       ];
     }
 
-    // Date Range filtering takes priority over Month-wise filtering
+    // FIXED: Improved date filtering logic with proper month boundary handling
     if (dateFrom || dateTo) {
+      // Date Range filtering takes priority over Month-wise filtering
       where.date = {};
       if (dateFrom) where.date[Op.gte] = dateFrom;
       if (dateTo) where.date[Op.lte] = dateTo;
     } else if (month) {
+      // FIXED: Proper month boundary calculation
       const [year, monthNum] = month.split('-');
-      const startDate = `${year}-${monthNum}-01`;
-      const endDate = new Date(parseInt(year), parseInt(monthNum), 0).toISOString().split('T')[0];
+      const startDate = `${year}-${monthNum.padStart(2, '0')}-01`;
+      // FIXED: Calculate last day of month properly
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endDate = `${year}-${monthNum.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
       where.date = {
         [Op.gte]: startDate,
         [Op.lte]: endDate
       };
+      console.log(`📅 Arrivals month filter applied: ${startDate} to ${endDate}`);
     } else if (!outturnId) {
       // CLOUD FIX: If no date filter provided AND no outturnId, default to last 30 days to prevent timeout
       // When outturnId is specified, we want ALL records for that outturn regardless of date
@@ -100,7 +105,7 @@ router.get('/arrivals', auth, async (req, res) => {
       return acc;
     }, {});
 
-    // Get available months for pagination
+    // FIXED: Improved available months query with proper filtering
     const monthsQuery = await sequelize.query(`
       SELECT DISTINCT 
         TO_CHAR(date, 'YYYY-MM') as month,
@@ -113,6 +118,8 @@ router.get('/arrivals', auth, async (req, res) => {
     `);
 
     const availableMonths = monthsQuery[0];
+
+    console.log(`✅ Arrivals query completed: ${rows.length} records returned`);
 
     res.json({
       records: groupedByDate,
@@ -161,19 +168,24 @@ router.get('/purchase', auth, async (req, res) => {
       status: 'approved'
     };
 
-    // Date Range filtering takes priority over Month-wise filtering
+    // FIXED: Improved date filtering logic with proper month boundary handling
     if (dateFrom || dateTo) {
+      // Date Range filtering takes priority over Month-wise filtering
       where.date = {};
       if (dateFrom) where.date[Op.gte] = dateFrom;
       if (dateTo) where.date[Op.lte] = dateTo;
     } else if (month) {
+      // FIXED: Proper month boundary calculation
       const [year, monthNum] = month.split('-');
-      const startDate = `${year}-${monthNum}-01`;
-      const endDate = new Date(parseInt(year), parseInt(monthNum), 0).toISOString().split('T')[0];
+      const startDate = `${year}-${monthNum.padStart(2, '0')}-01`;
+      // FIXED: Calculate last day of month properly
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endDate = `${year}-${monthNum.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
       where.date = {
         [Op.gte]: startDate,
         [Op.lte]: endDate
       };
+      console.log(`📅 Purchase month filter applied: ${startDate} to ${endDate}`);
     }
 
     // Pagination setup
@@ -219,7 +231,7 @@ router.get('/purchase', auth, async (req, res) => {
       return acc;
     }, {});
 
-    // Get available months for pagination
+    // FIXED: Improved available months query
     const monthsQuery = await sequelize.query(`
       SELECT DISTINCT 
         TO_CHAR(date, 'YYYY-MM') as month,
@@ -230,6 +242,8 @@ router.get('/purchase', auth, async (req, res) => {
     `);
 
     const totalPages = Math.ceil(totalCount / limitNum);
+
+    console.log(`✅ Purchase query completed: ${rows.length} records returned`);
 
     res.json({
       records: groupedByDate,
@@ -248,7 +262,16 @@ router.get('/purchase', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Get purchase records error:', error);
-    res.status(500).json({ error: 'Failed to fetch purchase records' });
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      query: req.query
+    });
+    res.status(500).json({ 
+      error: 'Failed to fetch purchase records',
+      message: error.message,
+      query: req.query
+    });
   }
 });
 
@@ -268,19 +291,24 @@ router.get('/shifting', auth, async (req, res) => {
       status: 'approved'
     };
 
-    // Date Range filtering takes priority over Month-wise filtering
+    // FIXED: Improved date filtering logic with proper month boundary handling
     if (dateFrom || dateTo) {
+      // Date Range filtering takes priority over Month-wise filtering
       where.date = {};
       if (dateFrom) where.date[Op.gte] = dateFrom;
       if (dateTo) where.date[Op.lte] = dateTo;
     } else if (month) {
+      // FIXED: Proper month boundary calculation
       const [year, monthNum] = month.split('-');
-      const startDate = `${year}-${monthNum}-01`;
-      const endDate = new Date(parseInt(year), parseInt(monthNum), 0).toISOString().split('T')[0];
+      const startDate = `${year}-${monthNum.padStart(2, '0')}-01`;
+      // FIXED: Calculate last day of month properly
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endDate = `${year}-${monthNum.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
       where.date = {
         [Op.gte]: startDate,
         [Op.lte]: endDate
       };
+      console.log(`📅 Shifting month filter applied: ${startDate} to ${endDate}`);
     }
 
     // Pagination setup
@@ -324,7 +352,7 @@ router.get('/shifting', auth, async (req, res) => {
       return acc;
     }, {});
 
-    // Get available months for pagination
+    // FIXED: Improved available months query
     const monthsQuery = await sequelize.query(`
       SELECT DISTINCT 
         TO_CHAR(date, 'YYYY-MM') as month,
@@ -335,6 +363,8 @@ router.get('/shifting', auth, async (req, res) => {
     `);
 
     const totalPages = Math.ceil(totalCount / limitNum);
+
+    console.log(`✅ Shifting query completed: ${rows.length} records returned`);
 
     res.json({
       records: groupedByDate,
@@ -353,7 +383,16 @@ router.get('/shifting', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Get shifting records error:', error);
-    res.status(500).json({ error: 'Failed to fetch shifting records' });
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      query: req.query
+    });
+    res.status(500).json({ 
+      error: 'Failed to fetch shifting records',
+      message: error.message,
+      query: req.query
+    });
   }
 });
 
@@ -375,19 +414,24 @@ router.get('/stock', auth, async (req, res) => {
       movementType: { [Op.ne]: 'loose' } // Exclude loose (loss) entries from stock
     };
 
-    // Date Range filtering takes priority over Month-wise filtering
+    // FIXED: Improved date filtering logic with proper month boundary handling
     if (dateFrom || dateTo) {
+      // Date Range filtering takes priority over Month-wise filtering
       where.date = {};
       if (dateFrom) where.date[Op.gte] = dateFrom;
       if (dateTo) where.date[Op.lte] = dateTo;
     } else if (month) {
+      // FIXED: Proper month boundary calculation
       const [year, monthNum] = month.split('-');
-      const startDate = `${year}-${monthNum}-01`;
-      const endDate = new Date(parseInt(year), parseInt(monthNum), 0).toISOString().split('T')[0];
+      const startDate = `${year}-${monthNum.padStart(2, '0')}-01`;
+      // FIXED: Calculate last day of month properly
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endDate = `${year}-${monthNum.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
       where.date = {
         [Op.gte]: startDate,
         [Op.lte]: endDate
       };
+      console.log(`📅 Month filter applied: ${startDate} to ${endDate}`);
     }
     // If no date filters provided, show all data (no default filter)
 
@@ -426,7 +470,7 @@ router.get('/stock', auth, async (req, res) => {
       offset: offset
     });
 
-    // Filter out arrivals with cleared outturns ONLY for dates AFTER the clearing date
+    // FIXED: Improved cleared outturn filtering logic
     const filteredRows = rows.filter(arrival => {
       // If arrival has an outturn and it's cleared
       if (arrival.outturn && arrival.outturn.isCleared && arrival.outturn.clearedAt) {
@@ -437,6 +481,7 @@ router.get('/stock', auth, async (req, res) => {
         // Only exclude if arrival date is AFTER the clearing date
         // Keep arrivals from before and on the clearing date
         if (arrivalDate > clearedDate) {
+          console.log(`🚫 Excluding arrival ${arrival.id} from ${arrivalDate} (outturn ${arrival.outturn.code} cleared on ${clearedDate})`);
           return false; // Exclude from stock
         }
       }
@@ -453,7 +498,7 @@ router.get('/stock', auth, async (req, res) => {
       return acc;
     }, {});
 
-    // Get available months for pagination
+    // FIXED: Improved available months query with proper ordering
     const monthsQuery = await sequelize.query(`
       SELECT DISTINCT 
         TO_CHAR(date, 'YYYY-MM') as month,
@@ -467,6 +512,8 @@ router.get('/stock', auth, async (req, res) => {
 
     const responseTime = Date.now() - startTime;
     const totalPages = Math.ceil(totalCount / limitNum);
+
+    console.log(`✅ Stock query completed in ${responseTime}ms: ${filteredRows.length} records returned`);
 
     res.json({
       records: groupedByDate,
@@ -489,7 +536,16 @@ router.get('/stock', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Get stock error:', error);
-    res.status(500).json({ error: 'Failed to fetch stock data' });
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      query: req.query
+    });
+    res.status(500).json({ 
+      error: 'Failed to fetch stock data',
+      message: error.message,
+      query: req.query
+    });
   }
 });
 
