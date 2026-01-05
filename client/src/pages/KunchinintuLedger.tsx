@@ -4,6 +4,7 @@ import axios from 'axios';
 import { toast } from '../utils/toast';
 import { useAuth } from '../contexts/AuthContext';
 import PaginationControls from '../components/PaginationControls';
+import { generateKunchinintuLedgerPDF } from '../utils/ledgerPdfGenerator';
 
 
 const Container = styled.div`
@@ -389,6 +390,10 @@ const KunchinintuLedger: React.FC = () => {
   const [totalRecords, setTotalRecords] = useState(0);
   const recordsPerPage = 250;
 
+  // Month-wise filter state for PDF export
+  const [selectedMonth, setSelectedMonth] = useState<string>('');
+
+
   useEffect(() => {
     fetchKunchinittusAndWarehouses();
   }, []);
@@ -561,47 +566,107 @@ const KunchinintuLedger: React.FC = () => {
     }
   };
 
-  const exportPDF = async () => {
+  const exportPDF = () => {
     if (!ledgerData) {
       toast.error('Please view ledger first');
       return;
     }
 
-    // Helper function to convert DD-MM-YYYY to YYYY-MM-DD
-    const convertDateFormat = (dateStr: string): string => {
-      if (!dateStr) return '';
-      const parts = dateStr.split('-');
-      if (parts.length === 3) {
-        const [day, month, year] = parts;
-        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-      }
-      return dateStr;
-    };
+    console.log('📊 Export PDF - ledgerData:', ledgerData);
 
     try {
-      const params: any = {};
-      if (dateFrom) params.dateFrom = convertDateFormat(dateFrom);
-      if (dateTo) params.dateTo = convertDateFormat(dateTo);
+      // Safely extract data with fallbacks for all properties
+      const kunchinittu = ledgerData.kunchinittu || { id: 0, code: 'Unknown' };
+      const warehouseData = (kunchinittu as any).warehouse || { name: '-', code: '-' };
+      const varietyData = (kunchinittu as any).variety?.name || 'SUM25 RNR';
 
-      const response = await axios.get(`/ledger/kunchinittu/${ledgerData.kunchinittu.id}/pdf`, {
-        params,
-        responseType: 'blob'
+      // Handle both 'totals' structure
+      const totals = ledgerData.totals || {
+        inward: { bags: 0, netWeight: 0 },
+        outward: { bags: 0, netWeight: 0 },
+        remaining: { bags: 0, netWeight: 0 }
+      };
+
+      // Get transactions - try both 'transactions' and direct arrays
+      const transactions = ledgerData.transactions || { inward: [], outward: [] };
+      const inwardTrans = transactions.inward || [];
+      const outwardTrans = transactions.outward || [];
+
+      console.log('📊 PDF Data Ready:', {
+        kunchinittu: kunchinittu.code,
+        warehouse: warehouseData.name,
+        variety: varietyData,
+        totals,
+        inwardCount: inwardTrans.length,
+        outwardCount: outwardTrans.length
       });
 
-      const url = window.URL.createObjectURL(new Blob([response.data as BlobPart]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `kunchinittu_ledger_${Date.now()}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      // Prepare PDF data
+      const pdfData = {
+        kunchinittu: {
+          id: kunchinittu.id,
+          code: kunchinittu.code,
+          name: kunchinittu.name || kunchinittu.code
+        },
+        warehouse: {
+          name: warehouseData.name || '-',
+          code: warehouseData.code || '-'
+        },
+        variety: varietyData,
+        averageRate: 0,
+        summary: {
+          inward: { bags: totals.inward?.bags || 0, netWeight: totals.inward?.netWeight || 0 },
+          outward: { bags: totals.outward?.bags || 0, netWeight: totals.outward?.netWeight || 0 },
+          remaining: { bags: totals.remaining?.bags || 0, netWeight: totals.remaining?.netWeight || 0 }
+        },
+        inwardRecords: inwardTrans.map((r: any, idx: number) => ({
+          id: r.id || idx,
+          slNo: (idx + 1).toString(),
+          date: r.date,
+          movementType: r.movementType || 'Purchase',
+          broker: r.broker || '-',
+          variety: r.variety || varietyData,
+          bags: r.bags || 0,
+          moisture: r.moisture,
+          cutting: r.cutting,
+          wbNo: r.wbNo || '-',
+          netWeight: r.netWeight || 0,
+          lorryNumber: r.lorryNumber || '-',
+          fromLocation: r.fromLocation || r.fromKunchinittu?.code || '-',
+          toLocation: r.toLocation || r.toKunchinittu?.code || kunchinittu.code || '-'
+        })),
+        outwardRecords: outwardTrans.map((r: any, idx: number) => ({
+          id: r.id || idx,
+          slNo: (idx + 1).toString(),
+          date: r.date,
+          movementType: r.movementType || 'Production-Shifting',
+          broker: r.broker || '-',
+          variety: r.variety || varietyData,
+          bags: r.bags || 0,
+          moisture: r.moisture,
+          cutting: r.cutting,
+          wbNo: r.wbNo || '-',
+          netWeight: r.netWeight || 0,
+          lorryNumber: r.lorryNumber || '-',
+          fromLocation: r.fromLocation || kunchinittu.code || '-',
+          toLocation: r.toLocation || r.outturn?.code || '-'
+        }))
+      };
 
-      toast.success('PDF exported successfully');
-    } catch (error) {
-      console.error('Error exporting PDF:', error);
-      toast.error('Failed to export PDF');
+      console.log('📊 Calling generateKunchinintuLedgerPDF...');
+
+      // Generate PDF
+      generateKunchinintuLedgerPDF(pdfData as any, { from: dateFrom, to: dateTo });
+      toast.success('PDF exported successfully!');
+    } catch (error: any) {
+      console.error('❌ Error exporting PDF:', error);
+      console.error('Stack:', error.stack);
+      toast.error(`PDF export failed: ${error.message || 'Unknown error'}`);
     }
   };
+
+
+
 
 
 
@@ -734,6 +799,54 @@ const KunchinintuLedger: React.FC = () => {
             </Select>
           </FormGroup>
 
+          {/* Month-wise Filter Dropdown */}
+          <FormGroup>
+            <Label>📅 Quick Month Filter</Label>
+            <Select
+              value={selectedMonth}
+              onChange={(e) => {
+                const monthValue = e.target.value;
+                setSelectedMonth(monthValue);
+
+                if (monthValue) {
+                  // Parse YYYY-MM and calculate first/last day
+                  const [year, month] = monthValue.split('-').map(Number);
+                  const firstDay = new Date(year, month - 1, 1);
+                  const lastDay = new Date(year, month, 0);
+
+                  // Format as DD-MM-YYYY for the existing date inputs
+                  const formatDate = (d: Date) => {
+                    const dd = String(d.getDate()).padStart(2, '0');
+                    const mm = String(d.getMonth() + 1).padStart(2, '0');
+                    const yyyy = d.getFullYear();
+                    return `${dd}-${mm}-${yyyy}`;
+                  };
+
+                  setDateFrom(formatDate(firstDay));
+                  setDateTo(formatDate(lastDay));
+                } else {
+                  // Clear dates when month is cleared
+                  setDateFrom('');
+                  setDateTo('');
+                }
+              }}
+            >
+              <option value="">Select Month...</option>
+              {/* Generate last 12 months options */}
+              {Array.from({ length: 12 }, (_, i) => {
+                const date = new Date();
+                date.setMonth(date.getMonth() - i);
+                const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                const label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                return (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                );
+              })}
+            </Select>
+          </FormGroup>
+
           <FormGroup>
             <Label>Date From</Label>
             <Input
@@ -763,6 +876,7 @@ const KunchinintuLedger: React.FC = () => {
           </Button>
         </FilterRow>
       </FilterSection>
+
 
       {multipleLedgerData.length > 0 ? (
         <>

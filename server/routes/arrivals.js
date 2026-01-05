@@ -941,7 +941,151 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+// GET OPENING BALANCE - Calculate stock totals before a given date
+// This is critical for date-filtered views where we need to know the opening stock
+router.get('/opening-balance', auth, async (req, res) => {
+  const startTime = Date.now();
+
+  try {
+    const { beforeDate } = req.query;
+
+    if (!beforeDate) {
+      return res.status(400).json({ error: 'beforeDate is required (format: YYYY-MM-DD)' });
+    }
+
+    console.log(`📊 Calculating opening balance before ${beforeDate}...`);
+
+    // WAREHOUSE STOCK: Calculate net stock by variety and location
+    // Inflow: Purchase (+), Shifting IN (+)
+    // Outflow: Shifting OUT (-), Production-Shifting OUT (-)
+    const warehouseStockQuery = `
+      WITH inflow AS (
+        SELECT 
+          variety,
+          COALESCE(tk.code, '') || ' - ' || COALESCE(tw.name, '') as location,
+          COALESCE(SUM(bags), 0) as bags_in
+        FROM arrivals a
+        LEFT JOIN kunchinittus tk ON a."toKunchinintuId" = tk.id
+        LEFT JOIN warehouses tw ON a."toWarehouseId" = tw.id
+        WHERE a.date < $1
+          AND a.status = 'approved'
+          AND a."adminApprovedBy" IS NOT NULL
+          AND a."movementType" = 'purchase'
+          AND a."outturnId" IS NULL
+        GROUP BY variety, tk.code, tw.name
+        
+        UNION ALL
+        
+        SELECT 
+          variety,
+          COALESCE(tk.code, '') || ' - ' || COALESCE(tw.name, '') as location,
+          COALESCE(SUM(bags), 0) as bags_in
+        FROM arrivals a
+        LEFT JOIN kunchinittus tk ON a."toKunchinintuId" = tk.id
+        LEFT JOIN warehouses tw ON a."toWarehouseShiftId" = tw.id
+        WHERE a.date < $1
+          AND a.status = 'approved'
+          AND a."adminApprovedBy" IS NOT NULL
+          AND a."movementType" = 'shifting'
+        GROUP BY variety, tk.code, tw.name
+      ),
+      outflow AS (
+        SELECT 
+          variety,
+          COALESCE(fk.code, '') || ' - ' || COALESCE(fw.name, '') as location,
+          COALESCE(SUM(bags), 0) as bags_out
+        FROM arrivals a
+        LEFT JOIN kunchinittus fk ON a."fromKunchinintuId" = fk.id
+        LEFT JOIN warehouses fw ON a."fromWarehouseId" = fw.id
+        WHERE a.date < $1
+          AND a.status = 'approved'
+          AND a."adminApprovedBy" IS NOT NULL
+          AND a."movementType" IN ('shifting', 'production-shifting')
+        GROUP BY variety, fk.code, fw.name
+      )
+      SELECT 
+        COALESCE(i.variety, o.variety) as variety,
+        COALESCE(i.location, o.location) as location,
+        COALESCE(SUM(i.bags_in), 0) - COALESCE(SUM(o.bags_out), 0) as bags
+      FROM inflow i
+      FULL OUTER JOIN outflow o ON i.variety = o.variety AND i.location = o.location
+      GROUP BY COALESCE(i.variety, o.variety), COALESCE(i.location, o.location)
+      HAVING COALESCE(SUM(i.bags_in), 0) - COALESCE(SUM(o.bags_out), 0) > 0
+    `;
+
+    // PRODUCTION STOCK: Calculate bags in outturns
+    // For-Production Purchase (+), Production-Shifting (+)
+    // Rice Production (-) - needs to be calculated separately
+    const productionStockQuery = `
+      SELECT 
+        variety,
+        COALESCE(o.code, 'OUT' || a."outturnId") as outturn,
+        COALESCE(SUM(bags), 0) as bags
+      FROM arrivals a
+      LEFT JOIN outturns o ON a."outturnId" = o.id
+      WHERE a.date < $1
+        AND a.status = 'approved'
+        AND a."adminApprovedBy" IS NOT NULL
+        AND (
+          (a."movementType" = 'purchase' AND a."outturnId" IS NOT NULL)
+          OR a."movementType" = 'production-shifting'
+        )
+      GROUP BY variety, o.code, a."outturnId"
+      HAVING COALESCE(SUM(bags), 0) > 0
+    `;
+
+    // Execute both queries
+    const [warehouseStock, productionStock] = await Promise.all([
+      sequelize.query(warehouseStockQuery, {
+        bind: [beforeDate],
+        type: Sequelize.QueryTypes.SELECT
+      }),
+      sequelize.query(productionStockQuery, {
+        bind: [beforeDate],
+        type: Sequelize.QueryTypes.SELECT
+      })
+    ]);
+
+    // Convert to objects keyed by variety-location or variety-outturn
+    const warehouseBalance = {};
+    warehouseStock.forEach(row => {
+      const key = `${row.variety}-${row.location}`;
+      warehouseBalance[key] = {
+        variety: row.variety,
+        location: row.location,
+        bags: parseInt(row.bags) || 0
+      };
+    });
+
+    const productionBalance = {};
+    productionStock.forEach(row => {
+      const key = `${row.variety}-${row.outturn}`;
+      productionBalance[key] = {
+        variety: row.variety,
+        outturn: row.outturn,
+        bags: parseInt(row.bags) || 0
+      };
+    });
+
+    const responseTime = Date.now() - startTime;
+    console.log(`✅ Opening balance calculated in ${responseTime}ms: ${Object.keys(warehouseBalance).length} warehouse entries, ${Object.keys(productionBalance).length} production entries`);
+
+    res.json({
+      beforeDate,
+      warehouseBalance,
+      productionBalance,
+      performance: {
+        responseTime: `${responseTime}ms`
+      }
+    });
+  } catch (error) {
+    console.error('Error calculating opening balance:', error);
+    res.status(500).json({ error: 'Failed to calculate opening balance' });
+  }
+});
+
 // Get all arrivals with pagination and filters - OPTIMIZED WITH CACHING
+
 router.get('/', auth, async (req, res) => {
   const startTime = Date.now();
 

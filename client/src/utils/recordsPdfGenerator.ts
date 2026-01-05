@@ -871,15 +871,17 @@ export const generateRiceStockPDF = (
                 const bags = m.bags || 0;
                 const bagSize = m.bagSizeKg || m.bag_size_kg || 26;
 
-                // Row background based on movement type
-                if (mvmtType === 'sale') {
-                    doc.setFillColor(254, 226, 226); // #fee2e2 Light red
+                // Row background based on movement type - EXACT frontend colors
+                if (mvmtType === 'production') {
+                    doc.setFillColor(212, 237, 218); // #d4edda - Production green
                 } else if (mvmtType === 'purchase') {
-                    doc.setFillColor(209, 250, 229); // #d1fae5 Light green
+                    doc.setFillColor(204, 229, 255); // #cce5ff - Purchase blue
+                } else if (mvmtType === 'sale') {
+                    doc.setFillColor(255, 229, 204); // #ffe5cc - Sale orange
                 } else if (mvmtType === 'palti' || mvmtType === 'palti-shortage') {
-                    doc.setFillColor(254, 243, 199); // #fef3c7 Light yellow
+                    doc.setFillColor(229, 204, 255); // #e5ccff - Palti purple
                 } else {
-                    // Production or other - alternate white/gray
+                    // Other - alternate white/gray
                     doc.setFillColor(idx % 2 === 0 ? 255 : 248, idx % 2 === 0 ? 255 : 249, idx % 2 === 0 ? 255 : 250);
                 }
                 doc.rect(MARGIN, yPos - 3, contentWidth, 4, 'F');
@@ -1205,7 +1207,7 @@ export const generateOutturnReportPDF = (
         yPos += 12;
     }
 
-    // By-Products Table with all 11 columns
+    // By-Products Table with EXACT frontend design - 11 horizontal columns
     if (byProducts.length > 0) {
         if (yPos > PAGE_HEIGHT_PORTRAIT - 80) {
             doc.addPage();
@@ -1214,86 +1216,108 @@ export const generateOutturnReportPDF = (
 
         doc.setFontSize(SUBHEADING_SIZE);
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(112, 173, 71);
-        doc.text(`By-Products Summary`, MARGIN, yPos);
+        doc.setTextColor(46, 117, 182); // #2E75B6
+        doc.text(`By-Products Record`, MARGIN, yPos);
         yPos += 6;
 
-        // Calculate totals for by-products
-        const totals = {
-            rice: byProducts.reduce((sum, bp) => sum + Number(bp.rice || 0), 0),
-            sizerBroken: byProducts.reduce((sum, bp) => sum + Number(bp.rejectionRice || 0), 0),
-            rjRice1: byProducts.reduce((sum, bp) => sum + Number(bp.rjRice1 || 0), 0),
-            rjRice2: byProducts.reduce((sum, bp) => sum + Number(bp.rjRice2 || 0), 0),
-            broken: byProducts.reduce((sum, bp) => sum + Number(bp.broken || 0), 0),
-            rjBroken: byProducts.reduce((sum, bp) => sum + Number(bp.rejectionBroken || 0), 0),
-            zeroBroken: byProducts.reduce((sum, bp) => sum + Number(bp.zeroBroken || 0), 0),
-            faram: byProducts.reduce((sum, bp) => sum + Number(bp.faram || 0), 0),
-            bran: byProducts.reduce((sum, bp) => sum + Number(bp.bran || 0), 0),
-            unpolished: byProducts.reduce((sum, bp) => sum + Number(bp.unpolished || 0), 0)
-        };
+        // EXACT frontend columns: Rice, Sizer Broken, RJ Rice 1, RJ Rice 2, Broken, Rejection Broken, Zero Broken, Faram, Bran, Unpolished, Date
+        const bpColumns = ['Rice', 'Sizer Broken', 'RJ Rice 1', 'RJ Rice 2', 'Broken', 'Rej Broken', '0 Broken', 'Faram', 'Bran', 'Unpolish', 'Date'];
+        const colWidth = contentWidth / bpColumns.length;
 
-        const totalByProducts = totals.rice + totals.sizerBroken + totals.rjRice1 + totals.rjRice2 +
-            totals.broken + totals.rjBroken + totals.zeroBroken + totals.faram + totals.bran + totals.unpolished;
-
-        // Total paddy weight from production records
-        const totalPaddyWeightKg = productionRecords.reduce((sum, r) => sum + Number(r.netWeight || 0), 0);
-        const totalPaddyQuintals = totalPaddyWeightKg / 100;
-
-        // Draw by-products summary table (3 columns: Quintals, Product, Yield%)
-        const entries = [
-            { label: 'Rice', value: totals.rice },
-            { label: 'Sizer Broken', value: totals.sizerBroken },
-            { label: 'RJ Rice 1', value: totals.rjRice1 },
-            { label: 'RJ Rice 2', value: totals.rjRice2 },
-            { label: 'Broken', value: totals.broken },
-            { label: 'RJ Broken', value: totals.rjBroken },
-            { label: 'Zero Broken', value: totals.zeroBroken },
-            { label: 'Faram', value: totals.faram },
-            { label: 'Bran', value: totals.bran },
-            { label: 'Unpolished', value: totals.unpolished }
-        ];
-
-        // Draw header
-        doc.setFillColor(155, 194, 230);
-        doc.rect(MARGIN, yPos, contentWidth / 2, 5, 'F');
-        doc.setFontSize(SMALL_SIZE);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(0, 0, 0);
-        doc.text('Quintals', MARGIN + 5, yPos + 3.5);
-        doc.text('Product', MARGIN + 30, yPos + 3.5);
-        doc.text('Yield %', MARGIN + 70, yPos + 3.5);
-        yPos += 5;
-
-        // Draw entries
-        entries.forEach((entry, idx) => {
-            const rowY = yPos + (idx * 4);
-            doc.setFillColor(idx % 2 === 0 ? 255 : 248, idx % 2 === 0 ? 255 : 249, idx % 2 === 0 ? 255 : 250);
-            doc.rect(MARGIN, rowY, contentWidth / 2, 4, 'F');
-
-            doc.setFontSize(SMALL_SIZE);
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(0, 0, 0);
-            doc.text(entry.value > 0 ? entry.value.toFixed(2) : '-', MARGIN + 5, rowY + 3);
-            doc.text(entry.label, MARGIN + 30, rowY + 3);
-
-            const yieldPct = totalPaddyQuintals > 0 ? ((entry.value / totalPaddyQuintals) * 100).toFixed(2) : '0.00';
-            doc.text(yieldPct, MARGIN + 70, rowY + 3);
-        });
-
-        yPos += (entries.length * 4) + 2;
-
-        // Total row with yield
-        doc.setFillColor(112, 173, 71);
-        doc.rect(MARGIN, yPos, contentWidth / 2, 5, 'F');
-        doc.setFontSize(SMALL_SIZE);
+        // Header row - Blue #2E75B6 like frontend
+        doc.setFillColor(46, 117, 182); // #2E75B6
+        doc.rect(MARGIN, yPos - 3, contentWidth, 6, 'F');
+        doc.setFontSize(4.5);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(255, 255, 255);
-        doc.text(`${totalByProducts.toFixed(2)} Q`, MARGIN + 5, yPos + 3.5);
-        doc.text('Total BY Products', MARGIN + 30, yPos + 3.5);
 
+        bpColumns.forEach((col, idx) => {
+            doc.text(col, MARGIN + (idx * colWidth) + 2, yPos);
+        });
+        yPos += 5;
+
+        // Data rows - alternating #BDD7EE / white like frontend
+        byProducts.forEach((bp: any, rowIdx: number) => {
+            const rowColor = rowIdx % 2 === 0 ? [189, 215, 238] : [255, 255, 255]; // #BDD7EE or white
+            doc.setFillColor(rowColor[0], rowColor[1], rowColor[2]);
+            doc.rect(MARGIN, yPos - 3, contentWidth, 4, 'F');
+
+            doc.setFontSize(4.5);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(0, 0, 0);
+
+            // Draw each cell value
+            const values = [
+                bp.rice > 0 ? bp.rice.toString() : '-',
+                bp.rejectionRice > 0 ? bp.rejectionRice.toString() : '-',
+                bp.rjRice1 > 0 ? bp.rjRice1.toString() : '-',
+                bp.rjRice2 > 0 ? bp.rjRice2.toString() : '-',
+                bp.broken > 0 ? bp.broken.toString() : '-',
+                bp.rejectionBroken > 0 ? bp.rejectionBroken.toString() : '-',
+                bp.zeroBroken > 0 ? bp.zeroBroken.toString() : '-',
+                bp.faram > 0 ? bp.faram.toString() : '-',
+                bp.bran > 0 ? bp.bran.toString() : '-',
+                bp.unpolished > 0 ? bp.unpolished.toString() : '-',
+                formatDate(bp.date)
+            ];
+
+            values.forEach((val, idx) => {
+                doc.text(val, MARGIN + (idx * colWidth) + 2, yPos);
+            });
+            yPos += 3.5;
+        });
+
+        // Totals row - Green totals
+        const totals = {
+            rice: byProducts.reduce((sum, bp: any) => sum + Number(bp.rice || 0), 0),
+            sizerBroken: byProducts.reduce((sum, bp: any) => sum + Number(bp.rejectionRice || 0), 0),
+            rjRice1: byProducts.reduce((sum, bp: any) => sum + Number(bp.rjRice1 || 0), 0),
+            rjRice2: byProducts.reduce((sum, bp: any) => sum + Number(bp.rjRice2 || 0), 0),
+            broken: byProducts.reduce((sum, bp: any) => sum + Number(bp.broken || 0), 0),
+            rjBroken: byProducts.reduce((sum, bp: any) => sum + Number(bp.rejectionBroken || 0), 0),
+            zeroBroken: byProducts.reduce((sum, bp: any) => sum + Number(bp.zeroBroken || 0), 0),
+            faram: byProducts.reduce((sum, bp: any) => sum + Number(bp.faram || 0), 0),
+            bran: byProducts.reduce((sum, bp: any) => sum + Number(bp.bran || 0), 0),
+            unpolished: byProducts.reduce((sum, bp: any) => sum + Number(bp.unpolished || 0), 0)
+        };
+
+        doc.setFillColor(112, 173, 71); // Green totals row
+        doc.rect(MARGIN, yPos - 3, contentWidth, 5, 'F');
+        doc.setFontSize(4.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(255, 255, 255);
+
+        const totalValues = [
+            totals.rice.toFixed(2),
+            totals.sizerBroken.toFixed(2),
+            totals.rjRice1.toFixed(2),
+            totals.rjRice2.toFixed(2),
+            totals.broken.toFixed(2),
+            totals.rjBroken.toFixed(2),
+            totals.zeroBroken.toFixed(2),
+            totals.faram.toFixed(2),
+            totals.bran.toFixed(2),
+            totals.unpolished.toFixed(2),
+            'TOTAL'
+        ];
+
+        totalValues.forEach((val, idx) => {
+            doc.text(val, MARGIN + (idx * colWidth) + 2, yPos + 1);
+        });
+        yPos += 8;
+
+        // Yield Summary
+        const totalByProducts = Object.values(totals).reduce((sum, val) => sum + val, 0);
+        const totalPaddyWeightKg = productionRecords.reduce((sum, r) => sum + Number(r.netWeight || 0), 0);
+        const totalPaddyQuintals = totalPaddyWeightKg / 100;
         const totalYield = totalPaddyQuintals > 0 ? ((totalByProducts / totalPaddyQuintals) * 100).toFixed(2) : '0.00';
-        doc.text(`${totalYield} %`, MARGIN + 70, yPos + 3.5);
+
+        doc.setFontSize(CONTENT_SIZE);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text(`Total By-Products: ${totalByProducts.toFixed(2)} Q | Paddy Used: ${totalPaddyQuintals.toFixed(2)} Q | Yield: ${totalYield}%`, MARGIN, yPos);
     }
+
 
     addFooter(doc, options, 'portrait');
 

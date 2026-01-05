@@ -198,9 +198,9 @@ router.post('/:id/clear', auth, authorize('admin', 'manager'), async (req, res) 
 
     console.log('🔍 Clear Outturn - Total paddy bags:', totalPaddyBags);
 
-    // Get total bags ENTERED BY USER (NOT paddyBagsDeducted)
+    // Get total bags DEDUCTED (use paddyBagsDeducted field)
     // This MUST match the logic in available-paddy-bags endpoint
-    const usedBags = await RiceProduction.sum('bags', {
+    const usedBags = await RiceProduction.sum('paddyBagsDeducted', {
       where: {
         outturnId: id,
         status: { [Op.in]: ['pending', 'approved'] }

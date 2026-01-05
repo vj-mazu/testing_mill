@@ -798,6 +798,13 @@ const Records: React.FC = () => {
   const [isSubmittingByProducts, setIsSubmittingByProducts] = useState(false);
   const [isSubmittingRiceProduction, setIsSubmittingRiceProduction] = useState(false);
 
+  // Historical opening balance - fetched from API when date filters are applied
+  // This ensures accurate opening stock calculation for filtered date ranges
+  const [historicalOpeningBalance, setHistoricalOpeningBalance] = useState<{
+    warehouseBalance: { [key: string]: { variety: string; location: string; bags: number } };
+    productionBalance: { [key: string]: { variety: string; outturn: string; bags: number } };
+  } | null>(null);
+
   // Month-wise pagination state
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [availableMonths, setAvailableMonths] = useState<MonthOption[]>([]);
@@ -831,6 +838,10 @@ const Records: React.FC = () => {
 
   // Business Date logic - show only today's records by default (6 AM cutoff)
   const [showAllRecords, setShowAllRecords] = useState(false);
+
+  // Date-wise PDF export state
+  const [singleDatePdf, setSingleDatePdf] = useState<string>('');
+
 
   // Get business date (if before 6 AM, use previous day)
   const getBusinessDate = () => {
@@ -1075,6 +1086,49 @@ const Records: React.FC = () => {
     };
     fetchAvailableBags();
   }, [selectedOutturnId]);
+
+  // Fetch historical opening balance when stock tab is active and date filter is applied
+  // This is critical for accurate opening stock when viewing a filtered date range
+  useEffect(() => {
+    const fetchOpeningBalance = async () => {
+      // Only fetch for stock tab when we have a date filter
+      if (activeTab !== 'stock' || !dateFrom) {
+        setHistoricalOpeningBalance(null);
+        return;
+      }
+
+      try {
+        // Convert DD-MM-YYYY to YYYY-MM-DD for API
+        const beforeDate = convertDateFormat(dateFrom);
+        if (!beforeDate) return;
+
+        console.log(`📊 Fetching opening balance before ${beforeDate}...`);
+        const response = await axios.get<{
+          warehouseBalance: { [key: string]: { variety: string; location: string; bags: number } };
+          productionBalance: { [key: string]: { variety: string; outturn: string; bags: number } };
+        }>('/arrivals/opening-balance', {
+          params: { beforeDate }
+        });
+
+        if (response.data) {
+          setHistoricalOpeningBalance({
+            warehouseBalance: response.data.warehouseBalance || {},
+            productionBalance: response.data.productionBalance || {}
+          });
+          console.log('✅ Opening balance fetched:', {
+            warehouseEntries: Object.keys(response.data.warehouseBalance || {}).length,
+            productionEntries: Object.keys(response.data.productionBalance || {}).length
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching opening balance:', error);
+        setHistoricalOpeningBalance(null);
+      }
+    };
+
+    fetchOpeningBalance();
+  }, [activeTab, dateFrom]);
+
 
   // Helper function to calculate paddy bags deducted from rice quintals
   const calculatePaddyBagsDeducted = (quintals: number, productType: string): number => {
@@ -1914,7 +1968,7 @@ const Records: React.FC = () => {
         // Combine and format all movements
         console.log('🔄 Processing and combining data...');
         let allMovements = [
-          // Production entries
+          // Production entries - include status field (productions are typically auto-approved)
           ...(productionsResponse.data.productions || []).map((prod: any) => ({
             ...prod,
             movementType: 'production',
@@ -1922,6 +1976,8 @@ const Records: React.FC = () => {
             productType: prod.productType || prod.product || 'Rice', // Add product type
             bagSizeKg: prod.packaging?.allottedKg || 26,
             quantityQuintals: prod.quantityQuintals,
+            // FIXED: Include status field for production records (default to 'approved' as productions are auto-approved)
+            status: prod.status || 'approved',
             // Ensure packaging object is properly structured
             packaging: prod.packaging ? {
               brandName: prod.packaging.brandName || 'A1',
@@ -1936,6 +1992,7 @@ const Records: React.FC = () => {
             billNumber: prod.billNumber,
             lorryNumber: prod.lorryNumber
           })),
+
           // Purchase/Sale/Palti entries
           ...stockMovements.map((movement: any) => ({
             id: `movement-${movement.id}`,
@@ -2644,9 +2701,124 @@ const Records: React.FC = () => {
             >
               📅 {groupBy === 'week' ? 'Week' : selectedMonth ? 'Month' : 'Day'} PDF
             </PDFButton>
+
+            {/* Date-wise PDF Export */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '1rem', borderLeft: '2px solid #e5e7eb', paddingLeft: '1rem' }}>
+              <input
+                type="date"
+                value={singleDatePdf}
+                onChange={(e) => setSingleDatePdf(e.target.value)}
+                style={{
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.85rem',
+                  width: '140px'
+                }}
+                title="Select a specific date for PDF export"
+              />
+              <PDFButton
+                $variant="filtered"
+                onClick={() => {
+                  if (!singleDatePdf) {
+                    toast.error('Please select a date for PDF export');
+                    return;
+                  }
+
+                  const dateDisplay = new Date(singleDatePdf).toLocaleDateString('en-GB', {
+                    day: '2-digit', month: 'short', year: 'numeric'
+                  });
+
+                  try {
+                    // Handle each tab type with its own data source
+                    if (activeTab === 'arrivals' || activeTab === 'purchase' || activeTab === 'shifting' || activeTab === 'stock') {
+                      // These tabs use 'records' object
+                      const allRecords = Object.values(records).flat();
+                      const dateRecords = allRecords.filter((r: any) => {
+                        const recordDate = r.date?.split('T')[0];
+                        return recordDate === singleDatePdf;
+                      });
+
+                      if (dateRecords.length === 0) {
+                        toast.error(`No records found for ${dateDisplay}`);
+                        return;
+                      }
+
+                      if (activeTab === 'arrivals') {
+                        generateArrivalsPDF(dateRecords, {
+                          title: `Arrivals Report - ${dateDisplay}`,
+                          dateRange: dateDisplay,
+                          filterType: 'day'
+                        });
+                      } else if (activeTab === 'purchase') {
+                        generatePurchasePDF(dateRecords, {
+                          title: `Purchase Records - ${dateDisplay}`,
+                          dateRange: dateDisplay,
+                          filterType: 'day'
+                        });
+                      } else if (activeTab === 'shifting') {
+                        generateShiftingPDF(dateRecords, {
+                          title: `Shifting Records - ${dateDisplay}`,
+                          dateRange: dateDisplay,
+                          filterType: 'day'
+                        });
+                      } else if (activeTab === 'stock') {
+                        generatePaddyStockPDF(dateRecords, {
+                          title: `Paddy Stock - ${dateDisplay}`,
+                          dateRange: dateDisplay,
+                          filterType: 'day'
+                        });
+                      }
+                    } else if (activeTab === 'rice-outturn-report' || activeTab === 'rice-stock') {
+                      // These tabs use 'riceStockData' which has different date format
+                      console.log('🔍 Date filter: riceStockData sample:', riceStockData.slice(0, 2));
+
+                      const dateRiceData = riceStockData.filter((r: any) => {
+                        // Try multiple date formats
+                        const itemDate = r.date?.split('T')[0] || r.date;
+                        return itemDate === singleDatePdf;
+                      });
+
+                      console.log('🔍 Date filter: Found rice records:', dateRiceData.length, 'for date:', singleDatePdf);
+
+                      if (dateRiceData.length === 0) {
+                        toast.error(`No rice records for ${dateDisplay}. Check if data is loaded.`);
+                        return;
+                      }
+
+                      if (activeTab === 'rice-outturn-report') {
+                        generateRiceMovementsPDF(dateRiceData, {
+                          title: `Rice Stock Movement - ${dateDisplay}`,
+                          dateRange: dateDisplay,
+                          filterType: 'day'
+                        });
+                      } else {
+                        generateRiceStockPDF(dateRiceData, {
+                          title: `Rice Stock - ${dateDisplay}`,
+                          dateRange: dateDisplay,
+                          filterType: 'day'
+                        });
+                      }
+                    }
+
+                    toast.success(`PDF for ${dateDisplay} downloaded!`);
+                    setSingleDatePdf(''); // Clear date after export
+                  } catch (error) {
+                    console.error('PDF generation error:', error);
+                    toast.error('Failed to generate PDF. Check console for details.');
+                  }
+                }}
+                disabled={!singleDatePdf}
+                title="Download PDF for selected date only"
+                style={{ opacity: singleDatePdf ? 1 : 0.5 }}
+              >
+                📆 Date PDF
+              </PDFButton>
+            </div>
           </div>
         </FilterRow>
       </FilterSection>
+
 
       {/* Current Month View Indicator */}
       {selectedMonth && activeTab !== 'rice-outturn-report' && activeTab !== 'rice-stock' && (
@@ -5461,6 +5633,33 @@ const Records: React.FC = () => {
 
                   // Track production shifting bags separately for opening stock
                   const openingProductionShifting: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } } = {};
+
+                  // IMPORTANT: If we have pre-fetched historical balance from API, use it as base
+                  // This is critical when date filter is applied (e.g., viewing Feb only)
+                  if (historicalOpeningBalance && dateFrom) {
+                    // Pre-populate warehouse opening stock from API
+                    Object.entries(historicalOpeningBalance.warehouseBalance).forEach(([key, value]) => {
+                      openingStockByKey[key] = {
+                        bags: value.bags,
+                        variety: value.variety,
+                        location: value.location
+                      };
+                    });
+
+                    // Pre-populate production opening stock from API
+                    Object.entries(historicalOpeningBalance.productionBalance).forEach(([key, value]) => {
+                      openingProductionShifting[key] = {
+                        bags: value.bags,
+                        variety: value.variety,
+                        outturn: value.outturn,
+                        kunchinittu: ''
+                      };
+                    });
+
+                    console.log(`[${date}] Using historical opening balance from API:`,
+                      Object.keys(openingStockByKey).length, 'warehouse entries,',
+                      Object.keys(openingProductionShifting).length, 'production entries');
+                  }
 
                   // Build opening stock from all dates BEFORE current date (chronologically, not by index)
                   // Get all dates in ascending order for calculation

@@ -1779,12 +1779,10 @@ const Hamali: React.FC = () => {
                                         title={(() => {
                                           if (selectedRiceProductionForHamali?.id === item.id) return "Close Form";
 
-                                          const riceCount = item.isRiceProduction
-                                            ? (riceHamaliEntries[item.id]?.length || 0)
-                                            : (riceHamaliEntries[`movement-${item.originalMovement?.id}`]?.length || 0);
-                                          const otherCount = item.isRiceProduction
-                                            ? (riceOtherHamaliEntries[item.id]?.length || 0)
-                                            : (riceOtherHamaliEntries[`movement-${item.originalMovement?.id}`]?.length || 0);
+                                          // FIXED: Use item.id directly - stock movements already have id in "movement-{id}" format
+                                          const riceKey = item.isRiceProduction ? item.id : item.id;
+                                          const riceCount = riceHamaliEntries[riceKey]?.length || 0;
+                                          const otherCount = riceOtherHamaliEntries[riceKey]?.length || 0;
 
                                           if (riceCount > 0 || otherCount > 0) {
                                             return `✓ Hamali Added - Rice: ${riceCount}, Other: ${otherCount}`;
@@ -1797,12 +1795,10 @@ const Hamali: React.FC = () => {
                                           if (selectedRiceProductionForHamali?.id === item.id) return '✕';
 
                                           // Check if hamali exists for this entry
-                                          const hasRiceHamali = item.isRiceProduction
-                                            ? riceHamaliEntries[item.id]?.length > 0
-                                            : riceHamaliEntries[`movement-${item.originalMovement?.id}`]?.length > 0;
-                                          const hasOtherHamali = item.isRiceProduction
-                                            ? riceOtherHamaliEntries[item.id]?.length > 0
-                                            : riceOtherHamaliEntries[`movement-${item.originalMovement?.id}`]?.length > 0;
+                                          // FIXED: Use item.id directly - stock movements already have id in "movement-{id}" format
+                                          const hamaliKey = item.isRiceProduction ? item.id : item.id;
+                                          const hasRiceHamali = riceHamaliEntries[hamaliKey]?.length > 0;
+                                          const hasOtherHamali = riceOtherHamaliEntries[hamaliKey]?.length > 0;
 
                                           return (hasRiceHamali || hasOtherHamali) ?
                                             <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>✓</span> :
@@ -1838,9 +1834,9 @@ const Hamali: React.FC = () => {
                                               return '#6b7280';
                                             }
 
-                                            // Check hamali for stock movements (Purchase/Sale/Palti)
-                                            const hasRiceHamali = riceHamaliEntries[`movement-${item.originalMovement?.id}`]?.length > 0;
-                                            const hasOtherHamali = riceOtherHamaliEntries[`movement-${item.originalMovement?.id}`]?.length > 0;
+                                            // FIXED: Check hamali using item.id directly - already in correct format
+                                            const hasRiceHamali = riceHamaliEntries[item.id]?.length > 0;
+                                            const hasOtherHamali = riceOtherHamaliEntries[item.id]?.length > 0;
 
                                             if (hasRiceHamali || hasOtherHamali) {
                                               return 'linear-gradient(135deg, #059669 0%, #047857 100%)';
@@ -1854,9 +1850,9 @@ const Hamali: React.FC = () => {
                                         title={(() => {
                                           if (selectedRiceProductionForHamali?.id === item.id) return "Close Form";
 
-                                          // Check hamali counts for stock movements
-                                          const riceCount = riceHamaliEntries[`movement-${item.originalMovement?.id}`]?.length || 0;
-                                          const otherCount = riceOtherHamaliEntries[`movement-${item.originalMovement?.id}`]?.length || 0;
+                                          // FIXED: Check hamali counts using item.id directly
+                                          const riceCount = riceHamaliEntries[item.id]?.length || 0;
+                                          const otherCount = riceOtherHamaliEntries[item.id]?.length || 0;
 
                                           if (riceCount > 0 || otherCount > 0) {
                                             return `✓ Hamali Added - Rice: ${riceCount}, Other: ${otherCount}`;
@@ -1868,9 +1864,9 @@ const Hamali: React.FC = () => {
                                         {(() => {
                                           if (selectedRiceProductionForHamali?.id === item.id) return '✕';
 
-                                          // Check hamali for stock movements (Purchase/Sale/Palti)
-                                          const hasRiceHamali = riceHamaliEntries[`movement-${item.originalMovement?.id}`]?.length > 0;
-                                          const hasOtherHamali = riceOtherHamaliEntries[`movement-${item.originalMovement?.id}`]?.length > 0;
+                                          // FIXED: Check hamali using item.id directly - already in correct format
+                                          const hasRiceHamali = riceHamaliEntries[item.id]?.length > 0;
+                                          const hasOtherHamali = riceOtherHamaliEntries[item.id]?.length > 0;
 
                                           return (hasRiceHamali || hasOtherHamali) ?
                                             <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>✓</span> :
@@ -1906,9 +1902,8 @@ const Hamali: React.FC = () => {
                 console.log('🧹 Cache cleared for immediate status refresh');
 
                 // Determine the entity ID for refresh
-                const entityId = selectedRiceProductionForHamali.isRiceProduction
-                  ? selectedRiceProductionForHamali.id
-                  : `movement-${selectedRiceProductionForHamali.originalMovement?.id}`;
+                // FIXED: Use item.id directly - stock movements already have id in "movement-{id}" format
+                const entityId = selectedRiceProductionForHamali.id;
 
                 // Use the new immediate refresh method
                 hamaliStatusManager.refreshStatusImmediate('rice', entityId, {
@@ -1919,9 +1914,11 @@ const Hamali: React.FC = () => {
                     const productionIds = riceStockData
                       .filter((item: any) => item.isRiceProduction)
                       .map((item: any) => item.id);
+                    // FIXED: Extract numeric IDs from "movement-123" format like fetchRiceStock does
                     const stockMovementIds = riceStockData
-                      .filter((item: any) => !item.isRiceProduction && item.originalMovement)
-                      .map((item: any) => item.originalMovement.id);
+                      .filter((item: any) => !item.isRiceProduction)
+                      .map((item: any) => parseInt(item.id.toString().replace('movement-', '')))
+                      .filter((id: number) => !isNaN(id));
 
                     if (productionIds.length > 0 || stockMovementIds.length > 0) {
                       fetchRiceHamaliEntries(productionIds, stockMovementIds);
@@ -1934,15 +1931,18 @@ const Hamali: React.FC = () => {
                     const productionIds = riceStockData
                       .filter((item: any) => item.isRiceProduction)
                       .map((item: any) => item.id);
+                    // FIXED: Extract numeric IDs from "movement-123" format
                     const stockMovementIds = riceStockData
-                      .filter((item: any) => !item.isRiceProduction && item.originalMovement)
-                      .map((item: any) => item.originalMovement.id);
+                      .filter((item: any) => !item.isRiceProduction)
+                      .map((item: any) => parseInt(item.id.toString().replace('movement-', '')))
+                      .filter((id: number) => !isNaN(id));
 
                     if (productionIds.length > 0 || stockMovementIds.length > 0) {
                       fetchRiceHamaliEntries(productionIds, stockMovementIds);
                     }
                   }
                 });
+
 
                 setSelectedRiceProductionForHamali(null);
                 toast.success('✅ Rice Hamali added successfully! Right mark should appear immediately.');
