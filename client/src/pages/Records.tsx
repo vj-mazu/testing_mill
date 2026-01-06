@@ -5862,9 +5862,27 @@ const Records: React.FC = () => {
                   // IMPORTANT: If we have pre-fetched historical balance from API, use it as base
                   // This is critical when date range filter is applied (e.g., viewing a specific date range)
                   if (historicalOpeningBalance && dateFrom) {
+                    // KEY NORMALIZATION: Convert old hyphen format to pipe format if needed
+                    // This ensures compatibility with both old and new backend API responses
+                    const normalizeKey = (key: string, variety: string): string => {
+                      // If key already uses pipe, return as-is
+                      if (key.includes('|')) return key;
+                      // If variety is at the start, replace first hyphen after variety with pipe
+                      if (key.startsWith(variety + '-')) {
+                        return variety + '|' + key.substring(variety.length + 1);
+                      }
+                      // Fallback: replace first hyphen with pipe
+                      const firstHyphenIndex = key.indexOf('-');
+                      if (firstHyphenIndex > 0) {
+                        return key.substring(0, firstHyphenIndex) + '|' + key.substring(firstHyphenIndex + 1);
+                      }
+                      return key;
+                    };
+
                     // Pre-populate warehouse opening stock from API
                     Object.entries(historicalOpeningBalance.warehouseBalance).forEach(([key, value]) => {
-                      openingStockByKey[key] = {
+                      const normalizedKey = normalizeKey(key, value.variety);
+                      openingStockByKey[normalizedKey] = {
                         bags: value.bags,
                         variety: value.variety,
                         location: value.location
@@ -5873,7 +5891,8 @@ const Records: React.FC = () => {
 
                     // Pre-populate production opening stock from API
                     Object.entries(historicalOpeningBalance.productionBalance).forEach(([key, value]) => {
-                      openingProductionShifting[key] = {
+                      const normalizedKey = normalizeKey(key, value.variety);
+                      openingProductionShifting[normalizedKey] = {
                         bags: value.bags,
                         variety: value.variety,
                         outturn: value.outturn,
@@ -5884,6 +5903,7 @@ const Records: React.FC = () => {
                     console.log(`[${date}] Using historical opening balance from API:`,
                       Object.keys(openingStockByKey).length, 'warehouse entries,',
                       Object.keys(openingProductionShifting).length, 'production entries');
+                    console.log(`[${date}] Normalized production shifting keys:`, Object.keys(openingProductionShifting));
                   }
 
                   const allDatesAscending = Array.from(new Set([...recordDates, ...riceProductionDates])).sort();
