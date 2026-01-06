@@ -5852,436 +5852,214 @@ const Records: React.FC = () => {
                   allUniqueDates = allDatesInRange;
                 }
 
-                // Reverse to show newest first
+
+                // ═══════════════════════════════════════════════════════════════════════════
+                // FIX: PRE-COMPUTE ALL STOCK IN CHRONOLOGICAL ORDER
+                // This ensures closing stock properly becomes next day's opening stock
+                // ═══════════════════════════════════════════════════════════════════════════
+
+                // Keep dates in chronological order for calculation
+                const datesChronological = [...allUniqueDates]; // Already sorted oldest first
+
+                // Helper to normalize keys (pipe separator)
+                const normalizeKeyFn = (key: string, variety: string): string => {
+                  if (key.includes('|')) return key;
+                  if (key.startsWith(variety + '-')) {
+                    return variety + '|' + key.substring(variety.length + 1);
+                  }
+                  const firstHyphenIndex = key.indexOf('-');
+                  if (firstHyphenIndex > 0) {
+                    return key.substring(0, firstHyphenIndex) + '|' + key.substring(firstHyphenIndex + 1);
+                  }
+                  return key;
+                };
+
+                // Helper to find outturn key
+                const findOutturnKey = (stockMap: any, outturnCode: string): string | null => {
+                  for (const key of Object.keys(stockMap)) {
+                    const item = stockMap[key];
+                    if (item.outturn === outturnCode) return key;
+                    if (key.endsWith('|' + outturnCode) || key.endsWith('-' + outturnCode)) return key;
+                    let keyOutturn = '';
+                    if (key.includes('|')) {
+                      const parts = key.split('|');
+                      keyOutturn = parts[parts.length - 1];
+                    } else if (key.includes('-')) {
+                      const firstHyphen = key.indexOf('-');
+                      keyOutturn = key.substring(firstHyphen + 1);
+                    }
+                    if (keyOutturn === outturnCode) return key;
+                  }
+                  return null;
+                };
+
+                // Helper to update stock safely
+                const safeUpdateStock = (stockMap: any, key: string, bags: number, metadata: any): boolean => {
+                  if (!stockMap[key]) {
+                    stockMap[key] = { ...metadata, bags: 0 };
+                  }
+                  const newValue = stockMap[key].bags + bags;
+                  stockMap[key].bags = Math.max(0, newValue);
+                  return newValue >= 0;
+                };
+
+                // Deep copy helper
+                const deepCopy = (obj: any): any => {
+                  const copy: any = {};
+                  Object.entries(obj).forEach(([k, v]: [string, any]) => {
+                    copy[k] = { ...v };
+                  });
+                  return copy;
+                };
+
+                // Store pre-computed stock for each date
+                interface StockData {
+                  openingWarehouse: { [key: string]: { bags: number; variety: string; location: string } };
+                  openingProduction: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } };
+                  closingWarehouse: { [key: string]: { bags: number; variety: string; location: string } };
+                  closingProduction: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } };
+                }
+                const preComputedStock = new Map<string, StockData>();
+
+                // Initialize running stock (will become next day's opening)
+                let runningWarehouse: { [key: string]: { bags: number; variety: string; location: string } } = {};
+                let runningProduction: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } } = {};
+
+                // Pre-populate from historical balance if date filter is applied
+                const preComputeStartDate = dateFrom ? convertDateFormat(dateFrom) : '';
+                if (historicalOpeningBalance && dateFrom) {
+                  Object.entries(historicalOpeningBalance.warehouseBalance).forEach(([key, value]) => {
+                    const nKey = normalizeKeyFn(key, value.variety);
+                    runningWarehouse[nKey] = { bags: value.bags, variety: value.variety, location: value.location };
+                  });
+                  Object.entries(historicalOpeningBalance.productionBalance).forEach(([key, value]) => {
+                    const nKey = normalizeKeyFn(key, value.variety);
+                    runningProduction[nKey] = { bags: value.bags, variety: value.variety, outturn: value.outturn, kunchinittu: '' };
+                  });
+                  console.log('📊 Pre-compute: Initialized from historical balance', Object.keys(runningWarehouse).length, 'warehouse,', Object.keys(runningProduction).length, 'production');
+                }
+
+                // Process each date in CHRONOLOGICAL order (oldest first)
+                datesChronological.forEach((d) => {
+                  // Opening = previous day's closing (from running variables)
+                  const openingWarehouse = deepCopy(runningWarehouse);
+                  const openingProduction = deepCopy(runningProduction);
+
+                  // Closing starts as copy of opening
+                  const closingWarehouse = deepCopy(openingWarehouse);
+                  const closingProduction = deepCopy(openingProduction);
+
+                  // Get today's arrivals and rice productions
+                  const dayRecords = records[d] || [];
+                  const dayRiceProds = allRiceProductions.filter((rp: any) => rp.date === d);
+
+                  // Apply arrivals to closing stock
+                  dayRecords.forEach((rec: Arrival) => {
+                    const variety = rec.variety || 'Unknown';
+
+                    if (rec.movementType === 'purchase') {
+                      if (!rec.outturnId) {
+                        const location = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouse?.name || ''}`;
+                        const key = `${variety}|${location}`;
+                        safeUpdateStock(closingWarehouse, key, rec.bags || 0, { variety, location });
+                      } else {
+                        const outturn = rec.outturn?.code || `OUT${rec.outturnId}`;
+                        const key = `${variety}|${outturn}`;
+                        safeUpdateStock(closingProduction, key, rec.bags || 0, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || 'Direct' });
+                      }
+                    } else if (rec.movementType === 'shifting') {
+                      const fromLoc = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
+                      const toLoc = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouseShift?.name || ''}`;
+                      const fromKey = `${variety}|${fromLoc}`;
+                      const toKey = `${variety}|${toLoc}`;
+                      const bags = rec.bags || 0;
+                      if (safeUpdateStock(closingWarehouse, fromKey, -bags, { variety, location: fromLoc })) {
+                        safeUpdateStock(closingWarehouse, toKey, bags, { variety, location: toLoc });
+                      }
+                    } else if (rec.movementType === 'production-shifting') {
+                      const fromLoc = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
+                      const fromKey = `${variety}|${fromLoc}`;
+                      const outturn = rec.outturn?.code || '';
+                      const prodKey = `${variety}|${outturn}`;
+                      const bags = rec.bags || 0;
+                      if (safeUpdateStock(closingWarehouse, fromKey, -bags, { variety, location: fromLoc })) {
+                        safeUpdateStock(closingProduction, prodKey, bags, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || '' });
+                      }
+                    }
+                  });
+
+                  // Subtract rice production from production stock
+                  dayRiceProds.forEach((rp: any) => {
+                    if (rp.movementType === 'loading') return;
+                    const outturnCode = rp.outturn?.code || '';
+                    if (!outturnCode) return;
+                    const matchedKey = findOutturnKey(closingProduction, outturnCode);
+                    if (matchedKey && closingProduction[matchedKey]) {
+                      const deducted = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
+                      closingProduction[matchedKey].bags = Math.max(0, closingProduction[matchedKey].bags - deducted);
+                    }
+                  });
+
+                  // Handle cleared outturns
+                  Object.keys(closingProduction).forEach(key => {
+                    const item = closingProduction[key];
+                    const clearingEntry = allRiceProductions.find((rp: any) =>
+                      rp.outturn?.code === item.outturn && rp.locationCode === 'CLEARING'
+                    );
+                    if (clearingEntry && clearingEntry.date <= d) {
+                      delete closingProduction[key];
+                    }
+                  });
+
+                  // Store pre-computed data
+                  preComputedStock.set(d, { openingWarehouse, openingProduction, closingWarehouse, closingProduction });
+
+                  // Update running stock for NEXT day's opening
+                  runningWarehouse = deepCopy(closingWarehouse);
+                  runningProduction = deepCopy(closingProduction);
+                });
+
+                console.log('📊 Pre-computed stock for', preComputedStock.size, 'dates');
+
+                // Reverse for display (newest first)
                 allUniqueDates = allUniqueDates.reverse();
 
                 return allUniqueDates.map((date) => {
-                  // Get all records for this date (no filtering)
+                  // ═══════════════════════════════════════════════════════════════════════════
+                  // USE PRE-COMPUTED STOCK DATA (calculated chronologically above)
+                  // This ensures closing stock properly becomes next day's opening stock
+                  // ═══════════════════════════════════════════════════════════════════════════
+                  const preComputed = preComputedStock.get(date);
+
+                  // Get pre-computed opening and closing stock
+                  const openingStockByKey = preComputed ? deepCopy(preComputed.openingWarehouse) : {};
+                  const openingProductionShifting = preComputed ? deepCopy(preComputed.openingProduction) : {};
+
+                  // Get today's records
                   let dateRecords = records[date] || [];
-
-                  // Track stock by variety and location (grouped)
-                  const openingStockByKey: { [key: string]: { bags: number; variety: string; location: string } } = {};
-
-                  // Track production shifting bags separately for opening stock
-                  const openingProductionShifting: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } } = {};
-
-                  // IMPORTANT: If we have pre-fetched historical balance from API, use it as base
-                  // This is critical when date range filter is applied (e.g., viewing a specific date range)
-                  if (historicalOpeningBalance && dateFrom) {
-                    // KEY NORMALIZATION: Convert old hyphen format to pipe format if needed
-                    // This ensures compatibility with both old and new backend API responses
-                    const normalizeKey = (key: string, variety: string): string => {
-                      // If key already uses pipe, return as-is
-                      if (key.includes('|')) return key;
-                      // If variety is at the start, replace first hyphen after variety with pipe
-                      if (key.startsWith(variety + '-')) {
-                        return variety + '|' + key.substring(variety.length + 1);
-                      }
-                      // Fallback: replace first hyphen with pipe
-                      const firstHyphenIndex = key.indexOf('-');
-                      if (firstHyphenIndex > 0) {
-                        return key.substring(0, firstHyphenIndex) + '|' + key.substring(firstHyphenIndex + 1);
-                      }
-                      return key;
-                    };
-
-                    // Pre-populate warehouse opening stock from API
-                    Object.entries(historicalOpeningBalance.warehouseBalance).forEach(([key, value]) => {
-                      const normalizedKey = normalizeKey(key, value.variety);
-                      openingStockByKey[normalizedKey] = {
-                        bags: value.bags,
-                        variety: value.variety,
-                        location: value.location
-                      };
-                    });
-
-                    // Pre-populate production opening stock from API
-                    Object.entries(historicalOpeningBalance.productionBalance).forEach(([key, value]) => {
-                      const normalizedKey = normalizeKey(key, value.variety);
-                      openingProductionShifting[normalizedKey] = {
-                        bags: value.bags,
-                        variety: value.variety,
-                        outturn: value.outturn,
-                        kunchinittu: ''
-                      };
-                    });
-
-                    console.log(`[${date}] Using historical opening balance from API:`,
-                      Object.keys(openingStockByKey).length, 'warehouse entries,',
-                      Object.keys(openingProductionShifting).length, 'production entries');
-                    console.log(`[${date}] Normalized production shifting keys:`, Object.keys(openingProductionShifting));
-                  }
-
-                  const allDatesAscending = Array.from(new Set([...recordDates, ...riceProductionDates])).sort();
-                  const startDateStr = dateFrom ? convertDateFormat(dateFrom) : '';
-
-                  // If we have a historical balance from API, only calculate movements FROM that date onwards
-                  // Dates before startDateStr are already in the historical balance
-                  const datesBeforeCurrent = allDatesAscending.filter(d => {
-                    if (historicalOpeningBalance && startDateStr) {
-                      return d < date && d >= startDateStr;
-                    }
-                    return d < date;
-                  });
-
-                  // Always calculate from local records for dates not covered by API balance
-                  if (true) {
-                    console.log(`[${date}] Adding movements from ${datesBeforeCurrent.length} previous dates to opening balance`);
-                    datesBeforeCurrent.forEach(prevDate => {
-                      records[prevDate]?.forEach((rec: Arrival) => {
-                        const variety = rec.variety || 'Unknown';
-
-                        if (rec.movementType === 'purchase' && !rec.outturnId) {
-                          // Normal Purchase: Add to warehouse destination location
-                          const location = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouse?.name || ''}`;
-                          const key = `${variety}|${location}`;
-
-                          if (!openingStockByKey[key]) {
-                            openingStockByKey[key] = { bags: 0, variety, location };
-                          }
-                          openingStockByKey[key].bags += rec.bags || 0;
-                        } else if (rec.movementType === 'purchase' && rec.outturnId) {
-                          // For-production purchase: Add directly to production shifting opening stock (no warehouse)
-                          const outturn = rec.outturn?.code || `OUT${rec.outturnId}`;
-                          const prodKey = `${variety}|${outturn}`;
-
-                          if (!openingProductionShifting[prodKey]) {
-                            openingProductionShifting[prodKey] = { bags: 0, variety, outturn, kunchinittu: '' };
-                          }
-                          openingProductionShifting[prodKey].bags += rec.bags || 0;
-                        } else if (rec.movementType === 'shifting') {
-                          // Normal shifting: Subtract from source, add to destination
-                          const fromLocation = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
-                          const toLocation = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouseShift?.name || ''}`;
-                          const fromKey = `${variety}|${fromLocation}`;
-                          const toKey = `${variety}|${toLocation}`;
-
-                          if (!openingStockByKey[fromKey]) {
-                            openingStockByKey[fromKey] = { bags: 0, variety, location: fromLocation };
-                          }
-                          if (!openingStockByKey[toKey]) {
-                            openingStockByKey[toKey] = { bags: 0, variety, location: toLocation };
-                          }
-                          openingStockByKey[fromKey].bags -= rec.bags || 0;
-                          openingStockByKey[toKey].bags += rec.bags || 0;
-                        } else if (rec.movementType === 'production-shifting') {
-                          // Production-shifting: SUBTRACT from warehouse stock and ADD to production shifting opening stock
-                          const fromLocation = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
-                          const fromKey = `${variety}|${fromLocation}`;
-                          const outturn = rec.outturn?.code || '';
-                          const prodKey = `${variety}|${outturn}`;
-
-                          // Subtract from warehouse stock
-                          if (!openingStockByKey[fromKey]) {
-                            openingStockByKey[fromKey] = { bags: 0, variety, location: fromLocation };
-                          }
-                          openingStockByKey[fromKey].bags -= rec.bags || 0;
-
-                          // Add to production shifting opening stock
-                          if (!openingProductionShifting[prodKey]) {
-                            openingProductionShifting[prodKey] = { bags: 0, variety, outturn, kunchinittu: '' };
-                          }
-                          openingProductionShifting[prodKey].bags += rec.bags || 0;
-                        }
-                      });
-                    });
-                    // CRITICAL: Subtract rice productions from previous dates WITHIN the filtered range
-                    // This ensures that when viewing Feb 4th, the opening stock reflects Feb 3rd's rice deductions
-                    datesBeforeCurrent.forEach(prevDate => {
-                      const prevDateRiceProds = allRiceProductions.filter((rp: any) => rp.date === prevDate);
-                      prevDateRiceProds.forEach((rp: any) => {
-                        // Skip 'loading' (dispatch) entries - they don't reduce paddy stock
-                        if (rp.movementType === 'loading') return;
-
-                        const riceOutturnCode = rp.outturn?.code || '';
-                        if (!riceOutturnCode) return;
-
-                        // Use identical robust matching logic as the daily loop
-                        let matchedKey = null;
-                        for (const key of Object.keys(openingProductionShifting)) {
-                          const item = openingProductionShifting[key];
-
-                          // Method 1: Check item.outturn property directly (most reliable)
-                          if (item.outturn === riceOutturnCode) {
-                            matchedKey = key;
-                            break;
-                          }
-
-                          // Method 2: Check if key ends with the outturn code (handles any separator)
-                          if (key.endsWith('|' + riceOutturnCode) || key.endsWith('-' + riceOutturnCode)) {
-                            matchedKey = key;
-                            break;
-                          }
-
-                          // Method 3: Try splitting by pipe then hyphen
-                          let keyOutturn = '';
-                          if (key.includes('|')) {
-                            const parts = key.split('|');
-                            keyOutturn = parts[parts.length - 1];
-                          } else if (key.includes('-')) {
-                            const firstHyphen = key.indexOf('-');
-                            keyOutturn = key.substring(firstHyphen + 1);
-                          }
-
-                          if (keyOutturn === riceOutturnCode) {
-                            matchedKey = key;
-                            break;
-                          }
-                        }
-
-                        if (matchedKey && openingProductionShifting[matchedKey]) {
-                          const deductedBags = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
-                          const currentBags = openingProductionShifting[matchedKey].bags;
-                          openingProductionShifting[matchedKey].bags = Math.max(0, currentBags - deductedBags);
-                          console.log(`[${date}] Deducted ${deductedBags} bags from ${matchedKey} for rice production on ${prevDate}`);
-                        }
-                      });
-                    });
-                  } // End of: if (!historicalOpeningBalance || (!dateFrom && !selectedMonth))
 
                   const openingStockItems = Object.values(openingStockByKey);
                   console.log(`[${date}] Opening Stock Items:`, openingStockItems);
                   console.log(`[${date}] Opening Production Shifting:`, openingProductionShifting);
 
-                  // Filter out cleared outturns from opening production shifting stock
-                  // This ensures cleared outturns don't appear in opening stock on subsequent days (AFTER the clearing date)
-                  console.log(`[${date}] Checking for cleared outturns in opening stock. Total rice productions:`, allRiceProductions.length);
-                  Object.keys(openingProductionShifting).forEach(key => {
-                    const item = openingProductionShifting[key];
-                    console.log(`[${date}] Checking outturn ${item.outturn} in opening stock`);
-                    // Find CLEARING entry in rice productions for this outturn
-                    const clearingEntry = allRiceProductions.find((rp: any) =>
-                      rp.outturn?.code === item.outturn &&
-                      rp.locationCode === 'CLEARING'
-                    );
-                    if (clearingEntry) {
-                      const clearingDate = clearingEntry.date;
-                      console.log(`[${date}] Found CLEARING entry for ${item.outturn} on ${clearingDate}`);
-                      // If outturn was cleared BEFORE this date (not on the same date), remove it from opening stock
-                      // On the clearing date itself, we still show it in opening stock
-                      if (clearingDate < date) {
-                        console.log(`[${date}] ✅ Removing cleared outturn ${item.outturn} (cleared on ${clearingDate}) from opening production shifting stock`);
-                        delete openingProductionShifting[key];
-                      } else if (clearingDate === date) {
-                        console.log(`[${date}] 📅 Outturn ${item.outturn} is being cleared TODAY, keeping in opening stock (will be removed from next day onwards)`);
-                      } else {
-                        console.log(`[${date}] ⏭️ Outturn ${item.outturn} will be cleared on ${clearingDate}, keeping in opening stock for now`);
-                      }
-                    } else {
-                      console.log(`[${date}] No CLEARING entry found for ${item.outturn}`);
-                    }
-                  });
+                  // Note: Cleared outturns are already filtered during pre-computation
 
-                  // Calculate closing stock (opening + today's movements)
-                  // Deep copy to avoid mutating opening stock
-                  const closingStockByKey: { [key: string]: { bags: number; variety: string; location: string; outturn?: string } } = {};
-                  Object.entries(openingStockByKey).forEach(([key, value]) => {
-                    closingStockByKey[key] = { ...value };
-                  });
+                  // ═══════════════════════════════════════════════════════════════════════════
+                  // USE PRE-COMPUTED CLOSING STOCK
+                  // ═══════════════════════════════════════════════════════════════════════════
+                  const closingStockByKey = preComputed ? deepCopy(preComputed.closingWarehouse) : {};
+                  const productionShiftingClosing = preComputed ? deepCopy(preComputed.closingProduction) : {};
 
-                  // Track production shifting bags separately with outturn info
-                  // Start with opening production shifting stock
-                  const productionShiftingClosing: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } } = {};
-                  Object.entries(openingProductionShifting).forEach(([key, value]) => {
-                    productionShiftingClosing[key] = { ...value };
-                  });
+                  // Get today's rice productions for display
+                  const todayRiceProductions = allRiceProductions.filter((rp: any) => rp.date === date);
 
-                  // Helper to safely update stock while preventing negative values
-                  /**
-                   * Updates stock levels for a given location/outturn
-                   * @param stockMap - The stock tracking object (closingStockByKey or productionShiftingClosing)
-                   * @param key - Unique key identifying the stock location (format varies by stock type)
-                   * @param bags - Number of bags to add (positive) or subtract (negative)
-                   * @param metadata - Additional data (variety, location, outturn, etc.)
-                   * @returns true if operation succeeded, false if insufficient stock for subtraction
-                   */
-                  const updateStock = (stockMap: any, key: string, bags: number, metadata: any) => {
-                    if (!stockMap[key]) {
-                      stockMap[key] = { ...metadata, bags: 0 };
-                    }
+                  // Check if this is a working day (has transactions or rice productions)
+                  const hasTransactions = dateRecords.length > 0 || todayRiceProductions.length > 0;
 
-                    // For additions (positive bags), always allow
-                    // For subtractions (negative bags), prevent going below 0
-                    const newValue = stockMap[key].bags + bags;
-                    stockMap[key].bags = Math.max(0, newValue);
-
-                    // Return true if the operation was fully successful
-                    return newValue >= 0;
-                  };
-
-                  /**
-                   * PURCHASE TYPES:
-                   * 1. Normal Purchase (toKunchinintuId present, outturnId null):
-                   *    - Paddy goes to warehouse storage
-                   *    - Adds to closingStockByKey (warehouse stock)
-                   *    - Later moved to production via "production-shifting"
-                   *    - Key format: "${variety}-${kunchinittu} - ${warehouse}"
-                   * 
-                   * 2. For Production Purchase (outturnId present, toKunchinintuId null):
-                   *    - Paddy goes directly to production (bypasses warehouse)
-                   *    - Does NOT add to closingStockByKey (warehouse stock)
-                   *    - Adds directly to productionShiftingClosing (production stock)
-                   *    - Key format: "${variety}-${kunchinittu}-${outturn}"
-                   */
-                  dateRecords.forEach((rec: Arrival) => {
-                    const variety = rec.variety || 'Unknown';
-
-                    if (rec.movementType === 'purchase') {
-                      // Validation: Ensure purchase has either outturnId OR toKunchinintuId, not both or neither
-                      const hasOutturn = !!rec.outturnId;
-                      const hasWarehouse = !!rec.toKunchinintuId;
-
-                      if (hasOutturn && hasWarehouse) {
-                        console.warn(`⚠️ Purchase #${rec.id}: Has both outturnId and toKunchinintuId. Treating as For Production (outturn takes priority).`);
-                      } else if (!hasOutturn && !hasWarehouse) {
-                        console.warn(`⚠️ Purchase #${rec.id}: Missing both outturnId and toKunchinintuId. Treating as Normal Purchase with empty warehouse.`);
-                      }
-
-                      if (!rec.outturnId) {
-                        // Normal Purchase: Add to warehouse stock (will be shifted to production later)
-                        const location = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouse?.name || ''}`;
-                        const key = `${variety}|${location}`;
-
-                        console.log(`[${date}] Normal Purchase: Adding ${rec.bags} bags of ${variety} to warehouse (${location})`);
-                        updateStock(closingStockByKey, key, rec.bags || 0, { variety, location });
-                      } else {
-                        // For Production Purchase: Skip warehouse stock, will be added to production stock directly
-                        const kunchinittu = rec.fromKunchinittu?.code || 'Direct';
-                        const outturn = rec.outturn?.code || `OUT${rec.outturnId}`;
-                        const key = `${variety}|${outturn}`;
-
-                        console.log(`[${date}] For Production Purchase: Adding ${rec.bags} bags of ${variety} directly to production (${outturn})`);
-                        updateStock(productionShiftingClosing, key, rec.bags || 0, { variety, outturn, kunchinittu });
-                      }
-                    } else if (rec.movementType === 'shifting') {
-                      // Normal shifting: Subtract from source, add to destination
-                      const fromLocation = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
-                      const toLocation = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouseShift?.name || ''}`;
-                      const fromKey = `${variety}|${fromLocation}`;
-                      const toKey = `${variety}|${toLocation}`;
-
-                      // Only proceed with shifting if source has enough stock
-                      const bags = rec.bags || 0;
-                      if (updateStock(closingStockByKey, fromKey, -bags, { variety, location: fromLocation })) {
-                        // If source deduction was successful, add to destination
-                        updateStock(closingStockByKey, toKey, bags, { variety, location: toLocation });
-                      } else {
-                        console.warn(`⚠️ Insufficient warehouse stock in ${fromLocation} for shifting ${bags} bags of ${variety}`);
-                      }
-                    } else if (rec.movementType === 'production-shifting') {
-                      // Production-shifting: SUBTRACT from warehouse stock and ADD to production stock
-                      const fromLocation = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
-                      const fromKey = `${variety}|${fromLocation}`;
-                      const kunchinittu = rec.fromKunchinittu?.code || '';
-                      const outturn = rec.outturn?.code || '';
-                      const prodKey = `${variety}|${outturn}`;
-                      const bags = rec.bags || 0;
-
-                      // Subtract from warehouse stock
-                      if (updateStock(closingStockByKey, fromKey, -bags, { variety, location: fromLocation })) {
-                        // If warehouse deduction was successful, add to production stock
-                        updateStock(productionShiftingClosing, prodKey, bags, { variety, outturn, kunchinittu });
-                      } else {
-                        console.warn(`⚠️ Insufficient warehouse stock in ${fromLocation} for production shifting ${bags} bags of ${variety} to ${outturn}`);
-                      }
-                    }
-                  });
-
-                  // Subtract rice production bags from production shifting closing stock
-                  let todayRiceProductions = allRiceProductions.filter((rp: any) => rp.date === date);
-                  console.log(`[${date}] Today's rice productions:`, todayRiceProductions);
-                  console.log(`[${date}] Production shifting closing BEFORE rice deduction:`, productionShiftingClosing);
-
-                  todayRiceProductions.forEach((rp: any) => {
-                    // CRITICAL FIX: Ignore 'loading' (dispatch) entries for PADDY STOCK calculation.
-                    // Loading entries are Rice Dispatches and should NOT reduce Paddy Stock.
-                    if (rp.movementType === 'loading') {
-                      return;
-                    }
-
-                    const riceOutturnCode = rp.outturn?.code || '';
-                    const riceBags = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
-
-                    console.log(`[${date}] Rice production - Outturn: ${riceOutturnCode}, Paddy Bags Deducted: ${riceBags}`);
-                    console.log(`[${date}] Production shifting keys:`, Object.keys(productionShiftingClosing));
-
-                    // Try to find matching key in productionShiftingClosing
-                    // The key format may be: ${variety}|${outturn} (new) OR ${variety}-${outturn} (old)
-                    // Also check the item.outturn property directly for more reliable matching
-                    let matchedKey = null;
-                    for (const key of Object.keys(productionShiftingClosing)) {
-                      const item = productionShiftingClosing[key];
-
-                      // Method 1: Check item.outturn property directly (most reliable)
-                      if (item.outturn === riceOutturnCode) {
-                        matchedKey = key;
-                        break;
-                      }
-
-                      // Method 2: Check if key ends with the outturn code (handles any separator)
-                      if (key.endsWith('|' + riceOutturnCode) || key.endsWith('-' + riceOutturnCode)) {
-                        matchedKey = key;
-                        break;
-                      }
-
-                      // Method 3: Try splitting by pipe then hyphen
-                      let keyOutturn = '';
-                      if (key.includes('|')) {
-                        const parts = key.split('|');
-                        keyOutturn = parts[parts.length - 1];
-                      } else if (key.includes('-')) {
-                        // For hyphen, take everything after the first hyphen (variety may not have hyphen)
-                        const firstHyphen = key.indexOf('-');
-                        keyOutturn = key.substring(firstHyphen + 1);
-                      }
-
-                      console.log(`[${date}] Comparing key outturn "${keyOutturn}" with rice outturn "${riceOutturnCode}"`);
-
-                      if (keyOutturn === riceOutturnCode) {
-                        matchedKey = key;
-                        break;
-                      }
-                    }
-
-                    if (matchedKey && productionShiftingClosing[matchedKey]) {
-                      const currentBags = productionShiftingClosing[matchedKey].bags;
-                      const newBags = Math.max(0, currentBags - riceBags);
-
-                      console.log(`[${date}] Deducting ${riceBags} paddy bags from ${matchedKey}: ${currentBags} -> ${newBags}`);
-
-                      productionShiftingClosing[matchedKey].bags = newBags;
-
-                      // Remove entry if bags reach 0
-                      if (newBags === 0) {
-                        delete productionShiftingClosing[matchedKey];
-                      }
-                    } else {
-                      console.warn(`[${date}] No matching production shifting found for rice production outturn: ${riceOutturnCode}`);
-                    }
-                  });
-
-                  console.log(`[${date}] Production shifting closing AFTER rice deduction:`, productionShiftingClosing);
-
-                  // Filter out cleared outturns from production shifting stock
-                  // Check if there's a CLEARING entry for this outturn on or before this date
-                  Object.keys(productionShiftingClosing).forEach(key => {
-                    const item = productionShiftingClosing[key];
-                    // Find CLEARING entry in rice productions for this outturn
-                    const clearingEntry = allRiceProductions.find((rp: any) =>
-                      rp.outturn?.code === item.outturn &&
-                      rp.locationCode === 'CLEARING'
-                    );
-                    if (clearingEntry) {
-                      const clearingDate = clearingEntry.date;
-                      // If outturn was cleared on or before this date, remove it from stock
-                      if (clearingDate <= date) {
-                        console.log(`[${date}] Removing cleared outturn ${item.outturn} (cleared on ${clearingDate}) from production shifting stock`);
-                        delete productionShiftingClosing[key];
-                      }
-                    }
-                  });
-
-                  const closingStockItems = Object.values(closingStockByKey);
+                  // ═══════════════════════════════════════════════════════════════════════════
+                  // CLOSING STOCK IS PRE-COMPUTED - Just filter for display
+                  // ═══════════════════════════════════════════════════════════════════════════
+                  const closingStockItems = Object.values(closingStockByKey).filter((item: any) => item.bags > 0);
                   const productionShiftingItems = Object.values(productionShiftingClosing).filter((item: any) => item.bags > 0);
 
                   // Consistency check: Validate stock calculations
@@ -6314,8 +6092,7 @@ const Records: React.FC = () => {
                     }
                   })();
 
-                  // Check if this is a working day (has transactions or rice productions)
-                  const hasTransactions = dateRecords.length > 0 || todayRiceProductions.length > 0;
+                  // hasTransactions is already calculated above
 
                   return (
                     <StockSection key={date} style={{
