@@ -5990,11 +5990,14 @@ const Records: React.FC = () => {
                         const riceOutturnCode = rp.outturn?.code || '';
                         if (!riceOutturnCode) return;
 
-                        // Find the matching production key
+                        // Find the matching production key - check outturn property directly or key ending
                         const matchingKey = Object.keys(openingProductionShifting).find(key => {
-                          const parts = key.split('|');
-                          const keyOutturn = parts[parts.length - 1];
-                          return keyOutturn === riceOutturnCode;
+                          const item = openingProductionShifting[key];
+                          // Check item.outturn property directly (most reliable)
+                          if (item.outturn === riceOutturnCode) return true;
+                          // Check if key ends with outturn code (handles any separator)
+                          if (key.endsWith('|' + riceOutturnCode) || key.endsWith('-' + riceOutturnCode)) return true;
+                          return false;
                         });
 
                         if (matchingKey && openingProductionShifting[matchingKey]) {
@@ -6177,11 +6180,34 @@ const Records: React.FC = () => {
                     console.log(`[${date}] Production shifting keys:`, Object.keys(productionShiftingClosing));
 
                     // Try to find matching key in productionShiftingClosing
-                    // The key format is: ${variety}|${outturn}
+                    // The key format may be: ${variety}|${outturn} (new) OR ${variety}-${outturn} (old)
+                    // Also check the item.outturn property directly for more reliable matching
                     let matchedKey = null;
                     for (const key of Object.keys(productionShiftingClosing)) {
-                      const parts = key.split('|');
-                      const keyOutturn = parts[parts.length - 1]; // Last part is outturn code
+                      const item = productionShiftingClosing[key];
+
+                      // Method 1: Check item.outturn property directly (most reliable)
+                      if (item.outturn === riceOutturnCode) {
+                        matchedKey = key;
+                        break;
+                      }
+
+                      // Method 2: Check if key ends with the outturn code (handles any separator)
+                      if (key.endsWith('|' + riceOutturnCode) || key.endsWith('-' + riceOutturnCode)) {
+                        matchedKey = key;
+                        break;
+                      }
+
+                      // Method 3: Try splitting by pipe then hyphen
+                      let keyOutturn = '';
+                      if (key.includes('|')) {
+                        const parts = key.split('|');
+                        keyOutturn = parts[parts.length - 1];
+                      } else if (key.includes('-')) {
+                        // For hyphen, take everything after the first hyphen (variety may not have hyphen)
+                        const firstHyphen = key.indexOf('-');
+                        keyOutturn = key.substring(firstHyphen + 1);
+                      }
 
                       console.log(`[${date}] Comparing key outturn "${keyOutturn}" with rice outturn "${riceOutturnCode}"`);
 
