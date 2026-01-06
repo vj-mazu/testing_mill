@@ -1048,6 +1048,12 @@ const Records: React.FC = () => {
     }
   }, [activeTab]);
 
+  useEffect(() => {
+    if (activeTab === 'stock') {
+      fetchOpeningBalance();
+    }
+  }, [activeTab, dateFrom]);
+
   // Refetch rice stock when month or filters change (using month-based filtering only)
   useEffect(() => {
     if (activeTab === 'rice-stock' || activeTab === 'rice-outturn-report') {
@@ -5990,24 +5996,44 @@ const Records: React.FC = () => {
                         const riceOutturnCode = rp.outturn?.code || '';
                         if (!riceOutturnCode) return;
 
-                        // Find the matching production key - check outturn property directly or key ending
-                        const matchingKey = Object.keys(openingProductionShifting).find(key => {
+                        // Use identical robust matching logic as the daily loop
+                        let matchedKey = null;
+                        for (const key of Object.keys(openingProductionShifting)) {
                           const item = openingProductionShifting[key];
-                          // Check item.outturn property directly (most reliable)
-                          if (item.outturn === riceOutturnCode) return true;
-                          // Check if key ends with outturn code (handles any separator)
-                          if (key.endsWith('|' + riceOutturnCode) || key.endsWith('-' + riceOutturnCode)) return true;
-                          return false;
-                        });
 
-                        if (matchingKey && openingProductionShifting[matchingKey]) {
-                          const deductedBags = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
-                          openingProductionShifting[matchingKey].bags -= deductedBags;
-                          // Prevent negative values
-                          if (openingProductionShifting[matchingKey].bags < 0) {
-                            openingProductionShifting[matchingKey].bags = 0;
+                          // Method 1: Check item.outturn property directly (most reliable)
+                          if (item.outturn === riceOutturnCode) {
+                            matchedKey = key;
+                            break;
                           }
-                          console.log(`[${date}] Deducted ${deductedBags} bags from ${matchingKey} for rice production on ${prevDate}`);
+
+                          // Method 2: Check if key ends with the outturn code (handles any separator)
+                          if (key.endsWith('|' + riceOutturnCode) || key.endsWith('-' + riceOutturnCode)) {
+                            matchedKey = key;
+                            break;
+                          }
+
+                          // Method 3: Try splitting by pipe then hyphen
+                          let keyOutturn = '';
+                          if (key.includes('|')) {
+                            const parts = key.split('|');
+                            keyOutturn = parts[parts.length - 1];
+                          } else if (key.includes('-')) {
+                            const firstHyphen = key.indexOf('-');
+                            keyOutturn = key.substring(firstHyphen + 1);
+                          }
+
+                          if (keyOutturn === riceOutturnCode) {
+                            matchedKey = key;
+                            break;
+                          }
+                        }
+
+                        if (matchedKey && openingProductionShifting[matchedKey]) {
+                          const deductedBags = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
+                          const currentBags = openingProductionShifting[matchedKey].bags;
+                          openingProductionShifting[matchedKey].bags = Math.max(0, currentBags - deductedBags);
+                          console.log(`[${date}] Deducted ${deductedBags} bags from ${matchedKey} for rice production on ${prevDate}`);
                         }
                       });
                     });
