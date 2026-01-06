@@ -20,7 +20,8 @@ router.get('/arrivals', auth, async (req, res) => {
       status,
       movementType,
       outturnId,
-      limit
+      limit,
+      showAll // NEW: When true, bypass 30-day limit for stock tab
     } = req.query;
 
     const where = {};
@@ -52,6 +53,7 @@ router.get('/arrivals', auth, async (req, res) => {
       where.date = {};
       if (dateFrom) where.date[Op.gte] = dateFrom;
       if (dateTo) where.date[Op.lte] = dateTo;
+      console.log(`📅 RECORDS API: Date range filter applied - From: ${dateFrom}, To: ${dateTo}`);
     } else if (month) {
       // FIXED: Proper month boundary calculation
       const [year, monthNum] = month.split('-');
@@ -64,14 +66,18 @@ router.get('/arrivals', auth, async (req, res) => {
         [Op.lte]: endDate
       };
       console.log(`📅 Arrivals month filter applied: ${startDate} to ${endDate}`);
-    } else if (!outturnId) {
-      // CLOUD FIX: If no date filter provided AND no outturnId, default to last 30 days to prevent timeout
+    } else if (!outturnId && showAll !== 'true') {
+      // CLOUD FIX: If no date filter provided AND no outturnId AND NOT showAll, default to last 30 days
+      // When showAll=true (stock tab), we want ALL records for accurate stock calculation
       // When outturnId is specified, we want ALL records for that outturn regardless of date
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       where.date = {
         [Op.gte]: thirtyDaysAgo.toISOString().split('T')[0]
       };
+      console.log(`📅 Default 30-day filter applied (no showAll flag)`);
+    } else if (showAll === 'true') {
+      console.log(`📅 showAll=true: Fetching ALL approved records (no date limit)`);
     }
 
     // Safety limit: Default to 2000 if no limit provided, max 5000
@@ -267,7 +273,7 @@ router.get('/purchase', auth, async (req, res) => {
       stack: error.stack,
       query: req.query
     });
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch purchase records',
       message: error.message,
       query: req.query
@@ -388,7 +394,7 @@ router.get('/shifting', auth, async (req, res) => {
       stack: error.stack,
       query: req.query
     });
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch shifting records',
       message: error.message,
       query: req.query
@@ -541,7 +547,7 @@ router.get('/stock', auth, async (req, res) => {
       stack: error.stack,
       query: req.query
     });
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch stock data',
       message: error.message,
       query: req.query

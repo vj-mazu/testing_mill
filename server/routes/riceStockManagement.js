@@ -912,6 +912,17 @@ router.put('/movements/:id', auth, async (req, res) => {
             type: sequelize.QueryTypes.UPDATE
         });
 
+        // CRITICAL: Clear all rice stock related caches to ensure fresh data
+        try {
+            await cacheService.delPattern('rice*');
+            await cacheService.delPattern('production*');
+            await cacheService.delPattern('byProduct*');
+            await cacheService.delPattern('outturn*');
+            console.log('✅ All related caches cleared after rice stock movement update');
+        } catch (cacheError) {
+            console.warn('⚠️ Failed to clear cache:', cacheError.message);
+        }
+
         res.json({
             success: true,
             data: {

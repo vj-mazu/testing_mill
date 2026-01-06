@@ -590,6 +590,10 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     // Recalculate quintals and paddy bags if bags or packaging changed
+    // CRITICAL: Store original values BEFORE any changes for By-Products sync
+    const oldQuantityQuintals = production.quantityQuintals;
+    const oldDate = production.date; // Capture old date for By-Products sync
+    const oldProductType = production.productType; // Capture old product type too
     let quantityQuintals = production.quantityQuintals;
     let paddyBagsDeducted = production.paddyBagsDeducted;
     let finalBags = bags !== undefined ? parseFloat(bags) : production.bags;
@@ -657,6 +661,115 @@ router.put('/:id', auth, async (req, res) => {
         { model: User, as: 'creator', attributes: ['username', 'role'] }
       ]
     });
+
+    // CRITICAL: Update By-Products table when quantity OR DATE changes
+    // This ensures Outturn Report shows correct totals after edit
+    try {
+      // Normalize dates to YYYY-MM-DD string for proper comparison
+      const normalizeDate = (d) => {
+        if (!d) return null;
+        if (typeof d === 'string') return d.substring(0, 10); // Take just YYYY-MM-DD part
+        if (d instanceof Date) return d.toISOString().substring(0, 10);
+        return String(d).substring(0, 10);
+      };
+
+      const oldDateStr = normalizeDate(oldDate);
+      const newDateStr = normalizeDate(date) || normalizeDate(production.date);
+      const newProductType = productType || oldProductType;
+      const dateChanged = oldDateStr !== newDateStr;
+      const quantityChanged = Math.abs(quantityQuintals - oldQuantityQuintals) > 0.001;
+
+      console.log(`📊 By-Products sync DEBUG: oldDate="${oldDateStr}", newDate="${newDateStr}"`);
+      console.log(`📊 By-Products sync: dateChanged=${dateChanged}, quantityChanged=${quantityChanged}`);
+
+      // Helper function to determine field from product type
+      const getFieldFromProductType = (typeStr) => {
+        const typeLower = typeStr.toLowerCase();
+        if (typeLower === 'rj rice 1') return 'rjRice1';
+        if (typeLower === 'rj rice 2') return 'rjRice2';
+        if (typeLower.includes('rice') && !typeLower.includes('rejection') && !typeLower.includes('sizer')) return 'rice';
+        if ((typeLower.includes('rejection') && typeLower.includes('rice')) || (typeLower.includes('sizer') && typeLower.includes('broken'))) return 'rejectionRice';
+        if (typeLower.includes('broken') && !typeLower.includes('rejection') && !typeLower.includes('zero') && !typeLower.includes('sizer')) return 'broken';
+        if (typeLower.includes('rejection') && typeLower.includes('broken')) return 'rejectionBroken';
+        if (typeLower.includes('zero') && typeLower.includes('broken')) return 'zeroBroken';
+        if (typeLower.includes('faram')) return 'faram';
+        if (typeLower.includes('bran')) return 'bran';
+        if (typeLower.includes('unpolished')) return 'unpolished';
+        return 'rice'; // default
+      };
+
+      if (dateChanged || quantityChanged) {
+        console.log(`   Old: Date=${oldDateStr}, Qty=${oldQuantityQuintals}, Type=${oldProductType}`);
+        console.log(`   New: Date=${newDateStr}, Qty=${quantityQuintals}, Type=${newProductType}`);
+
+        const oldField = getFieldFromProductType(oldProductType);
+        const newField = getFieldFromProductType(newProductType);
+
+        // STEP 1: SUBTRACT old quantity from OLD date's By-Products
+        if (dateChanged && oldQuantityQuintals > 0) {
+          console.log(`🔍 Looking for old ByProduct: outturnId=${production.outturnId}, date=${oldDateStr}`);
+          let oldByProduct = await ByProduct.findOne({
+            where: { outturnId: production.outturnId, date: oldDateStr }
+          });
+          if (oldByProduct) {
+            const currentVal = parseFloat(oldByProduct[oldField]) || 0;
+            const newVal = Math.max(0, currentVal - oldQuantityQuintals);
+            await oldByProduct.update({ [oldField]: newVal });
+            console.log(`✅ Subtracted ${oldQuantityQuintals} from OLD date ${oldDateStr}: ${oldField} = ${newVal}`);
+          } else {
+            console.log(`⚠️ Could not find old ByProduct for date ${oldDateStr}`);
+          }
+        }
+
+        // STEP 2: ADD new quantity to NEW date's By-Products
+        console.log(`🔍 Looking for new ByProduct: outturnId=${production.outturnId}, date=${newDateStr}`);
+        let newByProduct = await ByProduct.findOne({
+          where: { outturnId: production.outturnId, date: newDateStr }
+        });
+
+        if (newByProduct) {
+          const currentVal = parseFloat(newByProduct[newField]) || 0;
+          let newVal;
+          if (dateChanged) {
+            // Date changed: add full new quantity (we already subtracted from old)
+            newVal = currentVal + quantityQuintals;
+          } else {
+            // Same date: just add the difference
+            newVal = Math.max(0, currentVal + (quantityQuintals - oldQuantityQuintals));
+          }
+          await newByProduct.update({ [newField]: newVal });
+          console.log(`✅ Updated NEW date ${newDateStr}: ${newField} = ${newVal}`);
+        } else {
+          // Create new by-product entry for new date
+          const byProductData = {
+            outturnId: production.outturnId,
+            date: newDateStr,
+            rice: 0, rejectionRice: 0, rjRice1: 0, rjRice2: 0,
+            broken: 0, rejectionBroken: 0, zeroBroken: 0,
+            faram: 0, bran: 0, unpolished: 0,
+            createdBy: req.user.userId
+          };
+          byProductData[newField] = quantityQuintals;
+          await ByProduct.create(byProductData);
+          console.log(`✅ Created By-Product for ${newDateStr} with ${newField} = ${quantityQuintals}`);
+        }
+      }
+    } catch (byProductError) {
+      console.error('⚠️ Failed to update By-Products:', byProductError.message);
+      // Don't fail the main request - just log the error
+    }
+
+    // CRITICAL: Clear all related caches to ensure fresh data on refresh
+    try {
+      const cacheService = require('../services/cacheService');
+      await cacheService.delPattern('rice*');
+      await cacheService.delPattern('production*');
+      await cacheService.delPattern('byProduct*');
+      await cacheService.delPattern('outturn*');
+      console.log('✅ All related caches cleared after update');
+    } catch (cacheError) {
+      console.warn('⚠️ Failed to clear cache:', cacheError.message);
+    }
 
     res.json({
       message: 'Rice production entry updated successfully',

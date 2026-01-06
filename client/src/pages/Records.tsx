@@ -996,6 +996,15 @@ const Records: React.FC = () => {
   }, [search]);
 
   useEffect(() => {
+    // If date filters are modified, wait for complete format (DD-MM-YYYY) before fetching
+    const isDateFromPartial = dateFrom && (dateFrom.length !== 10 || dateFrom.split('-').length !== 3);
+    const isDateToPartial = dateTo && (dateTo.length !== 10 || dateTo.split('-').length !== 3);
+
+    if (isDateFromPartial || isDateToPartial) {
+      console.log('⏳ Waiting for complete date range before fetching...');
+      return;
+    }
+
     fetchRecords();
   }, [activeTab, page, dateFrom, dateTo, debouncedSearch, showAllRecords, selectedMonth]);
 
@@ -1088,32 +1097,31 @@ const Records: React.FC = () => {
     fetchAvailableBags();
   }, [selectedOutturnId]);
 
-  // Fetch historical opening balance when stock tab is active and date filter is applied
-  // This is critical for accurate opening stock when viewing a filtered date range OR month
+  // Fetch historical opening balance when stock tab is active and date range filter is applied
+  // SIMPLIFIED: Only for date range filter (month filter removed from stock tab)
   useEffect(() => {
     const fetchOpeningBalance = async () => {
-      // Only fetch for stock tab when we have a date filter OR month filter
-      if (activeTab !== 'stock' || (!dateFrom && !selectedMonth)) {
+      // Only fetch for stock tab when we have a dateFrom filter
+      // (month filter has been removed to avoid calculation errors)
+      if (activeTab !== 'stock' || !dateFrom) {
         setHistoricalOpeningBalance(null);
         return;
       }
 
-      try {
-        // Calculate the beforeDate based on which filter is active
-        let beforeDate: string;
+      // Validate date format: must be DD-MM-YYYY (10 characters)
+      if (dateFrom.length !== 10 || dateFrom.split('-').length !== 3) {
+        console.log(`⏳ Waiting for complete date format (current: ${dateFrom})`);
+        return; // Don't fetch until date is complete
+      }
 
-        if (dateFrom) {
-          // Date range filter: use the start date
-          beforeDate = convertDateFormat(dateFrom);
-        } else if (selectedMonth) {
-          // Month filter: use the first day of the selected month
-          // This ensures we get closing stock from the previous month
-          beforeDate = `${selectedMonth}-01`;
-        } else {
+      try {
+        // Use the dateFrom as the beforeDate for opening balance calculation
+        const beforeDate = convertDateFormat(dateFrom);
+
+        if (!beforeDate || beforeDate.length !== 10) {
+          console.log(`⚠️ Invalid converted date: ${beforeDate}`);
           return;
         }
-
-        if (!beforeDate) return;
 
         console.log(`📊 Fetching opening balance before ${beforeDate}...`);
         const response = await axios.get<{
@@ -1140,7 +1148,7 @@ const Records: React.FC = () => {
     };
 
     fetchOpeningBalance();
-  }, [activeTab, dateFrom, selectedMonth]);
+  }, [activeTab, dateFrom]); // Removed selectedMonth dependency
 
 
   // Helper function to calculate paddy bags deducted from rice quintals
@@ -1320,22 +1328,23 @@ const Records: React.FC = () => {
     try {
       const params: any = {};
 
-      // Special handling for paddy stock - month-wise pagination
+      // Special handling for paddy stock - ALWAYS fetch all allowed data for accurate calculation
       if (activeTab === 'stock') {
-        // Priority: date range filters > month filter
+        // We fetching ALL approved data to ensure local calculations (opening/closing/variety lookups) are correct
+        // even if the user filters the UI to a specific date range.
+        params.showAll = true;
+
+        // Always filter for approved records only (required for accurate stock)
+        params.status = 'approved';
+        // Request higher limit for stock calculation
+        params.limit = 5000;
+
         if (dateFrom || dateTo) {
-          if (dateFrom) params.dateFrom = convertDateFormat(dateFrom);
-          if (dateTo) params.dateTo = convertDateFormat(dateTo);
-        } else if (selectedMonth) {
-          params.month = selectedMonth;
+          console.log(`📊 Stock tab: Fetching all records for calculation, UI will be filtered locally from ${dateFrom} to ${dateTo}`);
         } else {
-          // If no month selected, show current month
-          const currentDate = new Date();
-          const currentMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
-          params.month = currentMonth;
-          setSelectedMonth(currentMonth); // Update state to reflect current month
+          console.log(`📊 Stock tab: No date filter - requesting ALL data`);
         }
-        // Don't use page/limit for stock - load full month
+        console.log(`📊 Stock tab API params:`, params);
       } else {
         // For other tabs, use regular pagination
         params.page = page;
@@ -2508,8 +2517,8 @@ const Records: React.FC = () => {
         )}
 
         <FilterRow>
-          {/* Month Selector for Paddy Stock / Overview / Rice Stock */}
-          {(activeTab === 'stock' || activeTab === 'arrivals' || activeTab === 'purchase' || activeTab === 'shifting' || activeTab === 'rice-stock' || activeTab === 'rice-outturn-report') && (
+          {/* Month Selector - NOT for Paddy Stock (removed to avoid calculation errors) */}
+          {(activeTab === 'arrivals' || activeTab === 'purchase' || activeTab === 'shifting' || activeTab === 'rice-stock' || activeTab === 'rice-outturn-report') && (
             <FormGroup>
               <Label>Month Filter</Label>
               <Select
@@ -5394,43 +5403,59 @@ const Records: React.FC = () => {
                         </tr>
                       ) : (
                         <>
-                          {byProducts.map((bp: any, idx: number) => (
-                            <tr key={bp.id} style={{ backgroundColor: idx % 2 === 0 ? '#BDD7EE' : 'white' }}>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.rice > 0 ? bp.rice : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.rejectionRice > 0 ? bp.rejectionRice : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.rjRice1 > 0 ? bp.rjRice1 : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.rjRice2 > 0 ? bp.rjRice2 : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.broken > 0 ? bp.broken : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.rejectionBroken > 0 ? bp.rejectionBroken : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.zeroBroken > 0 ? bp.zeroBroken : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.faram > 0 ? bp.faram : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.bran > 0 ? bp.bran : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {bp.unpolished > 0 ? bp.unpolished : '-'}
-                              </td>
-                              <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
-                                {new Date(bp.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
-                              </td>
-                            </tr>
-                          ))}
+                          {byProducts
+                            // Filter out rows where ALL values are 0 (empty rows)
+                            .filter((bp: any) => {
+                              const hasValue =
+                                (bp.rice && bp.rice > 0) ||
+                                (bp.rejectionRice && bp.rejectionRice > 0) ||
+                                (bp.rjRice1 && bp.rjRice1 > 0) ||
+                                (bp.rjRice2 && bp.rjRice2 > 0) ||
+                                (bp.broken && bp.broken > 0) ||
+                                (bp.rejectionBroken && bp.rejectionBroken > 0) ||
+                                (bp.zeroBroken && bp.zeroBroken > 0) ||
+                                (bp.faram && bp.faram > 0) ||
+                                (bp.bran && bp.bran > 0) ||
+                                (bp.unpolished && bp.unpolished > 0);
+                              return hasValue;
+                            })
+                            .map((bp: any, idx: number) => (
+                              <tr key={bp.id} style={{ backgroundColor: idx % 2 === 0 ? '#BDD7EE' : 'white' }}>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.rice > 0 ? bp.rice : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.rejectionRice > 0 ? bp.rejectionRice : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.rjRice1 > 0 ? bp.rjRice1 : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.rjRice2 > 0 ? bp.rjRice2 : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.broken > 0 ? bp.broken : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.rejectionBroken > 0 ? bp.rejectionBroken : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.zeroBroken > 0 ? bp.zeroBroken : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.faram > 0 ? bp.faram : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.bran > 0 ? bp.bran : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {bp.unpolished > 0 ? bp.unpolished : '-'}
+                                </td>
+                                <td style={{ border: '1px solid #9BC2E6', padding: '8px 12px', textAlign: 'center', fontSize: '10pt' }}>
+                                  {new Date(bp.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                                </td>
+                              </tr>
+                            ))}
 
                           {/* Totals Row */}
                           <tr style={{ backgroundColor: '#BDD7EE', fontWeight: 'bold' }}>
@@ -5732,7 +5757,8 @@ const Records: React.FC = () => {
         </div>
       ) : activeTab === 'stock' ? (
         /* Paddy Stock View - Full width layout */
-        Object.keys(records).length === 0 ? (
+        /* FIX: Show stock view if we have historicalOpeningBalance even when no transactions */
+        Object.keys(records).length === 0 && !(dateFrom && historicalOpeningBalance) ? (
           <EmptyState>
             <p>📭 No stock records found</p>
             <p style={{ fontSize: '0.9rem', color: '#9ca3af' }}>Records must be approved by admin to appear in paddy stock</p>
@@ -5795,8 +5821,8 @@ const Records: React.FC = () => {
                   const openingProductionShifting: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } } = {};
 
                   // IMPORTANT: If we have pre-fetched historical balance from API, use it as base
-                  // This is critical when date filter OR month filter is applied (e.g., viewing Feb only)
-                  if (historicalOpeningBalance && (dateFrom || selectedMonth)) {
+                  // This is critical when date range filter is applied (e.g., viewing a specific date range)
+                  if (historicalOpeningBalance && dateFrom) {
                     // Pre-populate warehouse opening stock from API
                     Object.entries(historicalOpeningBalance.warehouseBalance).forEach(([key, value]) => {
                       openingStockByKey[key] = {
@@ -5821,96 +5847,112 @@ const Records: React.FC = () => {
                       Object.keys(openingProductionShifting).length, 'production entries');
                   }
 
-                  // Build opening stock from all dates BEFORE current date (chronologically, not by index)
-                  // Get all dates in ascending order for calculation
                   const allDatesAscending = Array.from(new Set([...recordDates, ...riceProductionDates])).sort();
-                  const datesBeforeCurrent = allDatesAscending.filter(d => d < date);
-                  console.log(`[${date}] Dates before current:`, datesBeforeCurrent);
+                  const startDateStr = dateFrom ? convertDateFormat(dateFrom) : '';
 
-                  datesBeforeCurrent.forEach(prevDate => {
-                    records[prevDate]?.forEach((rec: Arrival) => {
-                      const variety = rec.variety || 'Unknown';
+                  // If we have a historical balance from API, only calculate movements FROM that date onwards
+                  // Dates before startDateStr are already in the historical balance
+                  const datesBeforeCurrent = allDatesAscending.filter(d => {
+                    if (historicalOpeningBalance && startDateStr) {
+                      return d < date && d >= startDateStr;
+                    }
+                    return d < date;
+                  });
 
-                      if (rec.movementType === 'purchase' && !rec.outturnId) {
-                        // Normal Purchase: Add to warehouse destination location
-                        const location = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouse?.name || ''}`;
-                        const key = `${variety}-${location}`;
+                  // Always calculate from local records for dates not covered by API balance
+                  if (true) {
+                    console.log(`[${date}] Adding movements from ${datesBeforeCurrent.length} previous dates to opening balance`);
+                    datesBeforeCurrent.forEach(prevDate => {
+                      records[prevDate]?.forEach((rec: Arrival) => {
+                        const variety = rec.variety || 'Unknown';
 
-                        if (!openingStockByKey[key]) {
-                          openingStockByKey[key] = { bags: 0, variety, location };
+                        if (rec.movementType === 'purchase' && !rec.outturnId) {
+                          // Normal Purchase: Add to warehouse destination location
+                          const location = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouse?.name || ''}`;
+                          const key = `${variety}-${location}`;
+
+                          if (!openingStockByKey[key]) {
+                            openingStockByKey[key] = { bags: 0, variety, location };
+                          }
+                          openingStockByKey[key].bags += rec.bags || 0;
+                        } else if (rec.movementType === 'purchase' && rec.outturnId) {
+                          // For-production purchase: Add directly to production shifting opening stock (no warehouse)
+                          const outturn = rec.outturn?.code || `OUT${rec.outturnId}`;
+                          const prodKey = `${variety}-${outturn}`;
+
+                          if (!openingProductionShifting[prodKey]) {
+                            openingProductionShifting[prodKey] = { bags: 0, variety, outturn, kunchinittu: '' };
+                          }
+                          openingProductionShifting[prodKey].bags += rec.bags || 0;
+                        } else if (rec.movementType === 'shifting') {
+                          // Normal shifting: Subtract from source, add to destination
+                          const fromLocation = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
+                          const toLocation = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouseShift?.name || ''}`;
+                          const fromKey = `${variety}-${fromLocation}`;
+                          const toKey = `${variety}-${toLocation}`;
+
+                          if (!openingStockByKey[fromKey]) {
+                            openingStockByKey[fromKey] = { bags: 0, variety, location: fromLocation };
+                          }
+                          if (!openingStockByKey[toKey]) {
+                            openingStockByKey[toKey] = { bags: 0, variety, location: toLocation };
+                          }
+                          openingStockByKey[fromKey].bags -= rec.bags || 0;
+                          openingStockByKey[toKey].bags += rec.bags || 0;
+                        } else if (rec.movementType === 'production-shifting') {
+                          // Production-shifting: SUBTRACT from warehouse stock and ADD to production shifting opening stock
+                          const fromLocation = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
+                          const fromKey = `${variety}-${fromLocation}`;
+                          const outturn = rec.outturn?.code || '';
+                          const prodKey = `${variety}-${outturn}`;
+
+                          // Subtract from warehouse stock
+                          if (!openingStockByKey[fromKey]) {
+                            openingStockByKey[fromKey] = { bags: 0, variety, location: fromLocation };
+                          }
+                          openingStockByKey[fromKey].bags -= rec.bags || 0;
+
+                          // Add to production shifting opening stock
+                          if (!openingProductionShifting[prodKey]) {
+                            openingProductionShifting[prodKey] = { bags: 0, variety, outturn, kunchinittu: '' };
+                          }
+                          openingProductionShifting[prodKey].bags += rec.bags || 0;
                         }
-                        openingStockByKey[key].bags += rec.bags || 0;
-                      } else if (rec.movementType === 'purchase' && rec.outturnId) {
-                        // For-production purchase: Add directly to production shifting opening stock (no warehouse)
-                        const outturn = rec.outturn?.code || `OUT${rec.outturnId}`;
+                      });
+                    });
+
+                    // Subtract rice production from opening production shifting stock (for all previous dates)
+                    // CRITICAL: Only count rice productions that aren't already in the historicalOpeningBalance
+                    const allRiceProdsBeforeDate = allRiceProductions.filter((rp: any) => {
+                      if (historicalOpeningBalance && startDateStr) {
+                        return rp.date < date && rp.date >= startDateStr;
+                      }
+                      return rp.date < date;
+                    });
+                    allRiceProdsBeforeDate.forEach((rp: any) => {
+                      const outturnArrival = Object.values(records).flat().find((rec: any) =>
+                        (rec.movementType === 'production-shifting' || (rec.movementType === 'purchase' && rec.outturnId)) &&
+                        rec.outturn?.code === rp.outturn?.code
+                      );
+
+                      if (outturnArrival) {
+                        const variety = outturnArrival.variety || 'Unknown';
+                        const outturn = rp.outturn?.code || 'Unknown';
+                        // Group by variety and outturn only (not kunchinittu) for opening stock
                         const prodKey = `${variety}-${outturn}`;
 
-                        if (!openingProductionShifting[prodKey]) {
-                          openingProductionShifting[prodKey] = { bags: 0, variety, outturn, kunchinittu: '' };
+                        if (openingProductionShifting[prodKey]) {
+                          // Use stored paddyBagsDeducted or calculate with new formula
+                          const deductedBags = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
+                          openingProductionShifting[prodKey].bags -= deductedBags;
+                          // Prevent negative values
+                          if (openingProductionShifting[prodKey].bags < 0) {
+                            openingProductionShifting[prodKey].bags = 0;
+                          }
                         }
-                        openingProductionShifting[prodKey].bags += rec.bags || 0;
-                      } else if (rec.movementType === 'shifting') {
-                        // Normal shifting: Subtract from source, add to destination
-                        const fromLocation = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
-                        const toLocation = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouseShift?.name || ''}`;
-                        const fromKey = `${variety}-${fromLocation}`;
-                        const toKey = `${variety}-${toLocation}`;
-
-                        if (!openingStockByKey[fromKey]) {
-                          openingStockByKey[fromKey] = { bags: 0, variety, location: fromLocation };
-                        }
-                        if (!openingStockByKey[toKey]) {
-                          openingStockByKey[toKey] = { bags: 0, variety, location: toLocation };
-                        }
-                        openingStockByKey[fromKey].bags -= rec.bags || 0;
-                        openingStockByKey[toKey].bags += rec.bags || 0;
-                      } else if (rec.movementType === 'production-shifting') {
-                        // Production-shifting: SUBTRACT from warehouse stock and ADD to production shifting opening stock
-                        const fromLocation = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
-                        const fromKey = `${variety}-${fromLocation}`;
-                        const outturn = rec.outturn?.code || '';
-                        const prodKey = `${variety}-${outturn}`;
-
-                        // Subtract from warehouse stock
-                        if (!openingStockByKey[fromKey]) {
-                          openingStockByKey[fromKey] = { bags: 0, variety, location: fromLocation };
-                        }
-                        openingStockByKey[fromKey].bags -= rec.bags || 0;
-
-                        // Add to production shifting opening stock
-                        if (!openingProductionShifting[prodKey]) {
-                          openingProductionShifting[prodKey] = { bags: 0, variety, outturn, kunchinittu: '' };
-                        }
-                        openingProductionShifting[prodKey].bags += rec.bags || 0;
                       }
                     });
-                  });
-
-                  // Subtract rice production from opening production shifting stock (for all previous dates)
-                  const allRiceProdsBeforeDate = allRiceProductions.filter((rp: any) => rp.date < date);
-                  allRiceProdsBeforeDate.forEach((rp: any) => {
-                    const outturnArrival = Object.values(records).flat().find((rec: any) =>
-                      (rec.movementType === 'production-shifting' || (rec.movementType === 'purchase' && rec.outturnId)) &&
-                      rec.outturn?.code === rp.outturn?.code
-                    );
-
-                    if (outturnArrival) {
-                      const variety = outturnArrival.variety || 'Unknown';
-                      const outturn = rp.outturn?.code || 'Unknown';
-                      // Group by variety and outturn only (not kunchinittu) for opening stock
-                      const prodKey = `${variety}-${outturn}`;
-
-                      if (openingProductionShifting[prodKey]) {
-                        // Use stored paddyBagsDeducted or calculate with new formula
-                        const deductedBags = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
-                        openingProductionShifting[prodKey].bags -= deductedBags;
-                        // Prevent negative values
-                        if (openingProductionShifting[prodKey].bags < 0) {
-                          openingProductionShifting[prodKey].bags = 0;
-                        }
-                      }
-                    }
-                  });
+                  } // End of: if (!historicalOpeningBalance || (!dateFrom && !selectedMonth))
 
                   const openingStockItems = Object.values(openingStockByKey);
                   console.log(`[${date}] Opening Stock Items:`, openingStockItems);
