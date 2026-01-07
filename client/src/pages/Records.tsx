@@ -6010,10 +6010,6 @@ const Records: React.FC = () => {
 
                   // Subtract rice production from production stock
                   dayRiceProds.forEach((rp: any) => {
-                    if (rp.movementType === 'loading') {
-                      console.log(`  ⚪ [${d}] RICE-LOADING (SKIP): ${rp.outturn?.code} - ${rp.quantityQuintals}Q`);
-                      return;
-                    }
                     const outturnCode = rp.outturn?.code || '';
                     if (!outturnCode) {
                       console.log(`  ⚪ [${d}] RICE-PROD (NO OUTTURN CODE): ${rp.quantityQuintals}Q`);
@@ -6021,13 +6017,19 @@ const Records: React.FC = () => {
                     }
                     const matchedKey = findOutturnKey(closingProduction, outturnCode);
                     if (matchedKey && closingProduction[matchedKey]) {
-                      // DEBUG: Show both database value and calculated value
+                      // Use stored deduction or calculate fresh
                       const dbValue = rp.paddyBagsDeducted || 0;
                       const calcValue = calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
                       const deducted = dbValue || calcValue;
+
                       const beforeBags = closingProduction[matchedKey].bags;
                       closingProduction[matchedKey].bags = Math.max(0, closingProduction[matchedKey].bags - deducted);
-                      console.log(`  🔴 [${d}] RICE-PROD: -${deducted} from Production(${outturnCode}) [${beforeBags} → ${closingProduction[matchedKey].bags}] (db=${dbValue}, calc=${calcValue}, Q=${rp.quantityQuintals}, type=${rp.productType})`);
+
+                      if (rp.movementType === 'loading') {
+                        console.log(`  🟠 [${d}] RICE-LOADING: -${deducted} from Production(${outturnCode}) [${beforeBags} → ${closingProduction[matchedKey].bags}] (Q=${rp.quantityQuintals})`);
+                      } else {
+                        console.log(`  🔴 [${d}] RICE-PROD: -${deducted} from Production(${outturnCode}) [${beforeBags} → ${closingProduction[matchedKey].bags}] (db=${dbValue}, calc=${calcValue})`);
+                      }
                     } else {
                       console.log(`  ⚠️ [${d}] RICE-PROD (NO MATCH): ${outturnCode} - paddyDeducted: ${rp.paddyBagsDeducted}`);
                     }
@@ -6056,7 +6058,7 @@ const Records: React.FC = () => {
                   const purchasesToday = dayRecords.filter((r: Arrival) => r.movementType === 'purchase' && !r.outturnId).reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
                   const forProdToday = dayRecords.filter((r: Arrival) => r.movementType === 'purchase' && r.outturnId).reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
                   const prodShiftingToday = dayRecords.filter((r: Arrival) => r.movementType === 'production-shifting').reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
-                  const riceDeductToday = dayRiceProds.filter((rp: any) => rp.movementType !== 'loading').reduce((sum: number, rp: any) => sum + (rp.paddyBagsDeducted || 0), 0);
+                  const riceDeductToday = dayRiceProds.reduce((sum: number, rp: any) => sum + (rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '')), 0);
 
                   console.log(`📊 [${d}] Opening: W=${openingWarehouseTotal} P=${openingProductionTotal} | Purchases: ${purchasesToday} ForProd: ${forProdToday} ProdShift: ${prodShiftingToday} RiceDeduct: ${riceDeductToday} | Closing: W=${closingWarehouseTotal} P=${closingProductionTotal} | Total: ${closingWarehouseTotal + closingProductionTotal}`);
 
@@ -6120,7 +6122,6 @@ const Records: React.FC = () => {
                     const purchases = dateRecords.filter((r: Arrival) => r.movementType === 'purchase')
                       .reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
                     const riceProductionDeduction = todayRiceProductions
-                      .filter((rp: any) => rp.movementType !== 'loading')
                       .reduce((sum: number, rp: any) => sum + (rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '')), 0);
 
                     // Expected closing = opening + all purchases - rice production deductions
