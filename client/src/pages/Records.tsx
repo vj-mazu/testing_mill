@@ -6021,10 +6021,13 @@ const Records: React.FC = () => {
                     }
                     const matchedKey = findOutturnKey(closingProduction, outturnCode);
                     if (matchedKey && closingProduction[matchedKey]) {
-                      const deducted = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
+                      // DEBUG: Show both database value and calculated value
+                      const dbValue = rp.paddyBagsDeducted || 0;
+                      const calcValue = calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
+                      const deducted = dbValue || calcValue;
                       const beforeBags = closingProduction[matchedKey].bags;
                       closingProduction[matchedKey].bags = Math.max(0, closingProduction[matchedKey].bags - deducted);
-                      console.log(`  🔴 [${d}] RICE-PROD: -${deducted} from Production(${outturnCode}) [${beforeBags} → ${closingProduction[matchedKey].bags}]`);
+                      console.log(`  🔴 [${d}] RICE-PROD: -${deducted} from Production(${outturnCode}) [${beforeBags} → ${closingProduction[matchedKey].bags}] (db=${dbValue}, calc=${calcValue}, Q=${rp.quantityQuintals}, type=${rp.productType})`);
                     } else {
                       console.log(`  ⚠️ [${d}] RICE-PROD (NO MATCH): ${outturnCode} - paddyDeducted: ${rp.paddyBagsDeducted}`);
                     }
