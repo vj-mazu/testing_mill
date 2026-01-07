@@ -1,6 +1,7 @@
 const express = require('express');
 const { auth, authorize } = require('../middleware/auth');
 const HamaliEntriesService = require('../services/HamaliEntriesService');
+const cacheService = require('../services/cacheService');
 
 const router = express.Router();
 
@@ -53,7 +54,7 @@ router.get('/arrival/:arrivalId', auth, async (req, res) => {
   }
 });
 
-// POST /api/hamali-entries/batch - Get hamali entries for multiple arrivals
+// POST /api/hamali-entries/batch - Get hamali entries for multiple arrivals (CACHED)
 router.post('/batch', auth, async (req, res) => {
   try {
     const { arrivalIds } = req.body;
@@ -62,7 +63,29 @@ router.post('/batch', auth, async (req, res) => {
       return res.status(400).json({ error: 'arrivalIds must be an array' });
     }
 
+    // SAFE CACHING: Create cache key based on sorted IDs
+    const sortedIds = [...arrivalIds].sort((a, b) => a - b);
+    const cacheKey = `hamali-batch:${sortedIds.join(',')}`;
+
+    // Try cache first (safe - won't crash on error)
+    try {
+      const cachedData = await cacheService.get(cacheKey);
+      if (cachedData) {
+        return res.json({ entries: cachedData, fromCache: true });
+      }
+    } catch (cacheError) {
+      console.warn('Hamali batch cache read failed (safe):', cacheError.message);
+    }
+
     const entries = await HamaliEntriesService.getEntriesByArrivalIds(arrivalIds);
+
+    // SAFE CACHE SET (won't crash on error)
+    try {
+      await cacheService.set(cacheKey, entries, 30); // 30 second cache
+    } catch (cacheError) {
+      console.warn('Hamali batch cache write failed (safe):', cacheError.message);
+    }
+
     res.json({ entries });
   } catch (error) {
     console.error('Batch get hamali entries error:', error);

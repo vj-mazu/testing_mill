@@ -1648,9 +1648,21 @@ router.delete('/:id', auth, authorize('manager', 'admin'), async (req, res) => {
   }
 });
 
-// Get pending approvals list (for managers and admins) - OPTIMIZED for 10 lakh records
+// Get pending approvals list (for managers and admins) - OPTIMIZED with CACHING
 router.get('/pending-list', auth, authorize(['manager', 'admin']), async (req, res) => {
   try {
+    // Create cache key based on user role
+    const cacheKey = `pending-list:${req.user.role}`;
+
+    // Try to get from cache first (15 second TTL)
+    const cachedData = await cacheService.get(cacheKey);
+    if (cachedData) {
+      return res.json({
+        ...cachedData,
+        fromCache: true
+      });
+    }
+
     const where = {};
 
     // Managers see pending records (awaiting manager approval)
@@ -1678,11 +1690,16 @@ router.get('/pending-list', auth, authorize(['manager', 'admin']), async (req, r
       limit: 500 // Safety limit for 10 lakh record performance
     });
 
-    res.json({
+    const responseData = {
       count: arrivals.length,
       approvals: arrivals,
       role: req.user.role
-    });
+    };
+
+    // Cache for 15 seconds (much shorter than the 30 second refresh)
+    await cacheService.set(cacheKey, responseData, 15);
+
+    res.json(responseData);
   } catch (error) {
     console.error('Get pending list error:', error);
     res.status(500).json({ error: 'Failed to fetch pending approvals' });

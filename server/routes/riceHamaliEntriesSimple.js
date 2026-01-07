@@ -1,19 +1,39 @@
 const express = require('express');
 const { auth } = require('../middleware/auth');
 const { sequelize } = require('../config/database');
+const cacheService = require('../services/cacheService');
 const router = express.Router();
 
-// Get rice hamali entries by rice production IDs (batch) - SIMPLIFIED VERSION
+// Get rice hamali entries by rice production IDs (batch) - CACHED VERSION
 router.post('/batch', auth, async (req, res) => {
   try {
     const { riceProductionIds = [], stockMovementIds = [] } = req.body;
-    
-    if ((!riceProductionIds || riceProductionIds.length === 0) && 
-        (!stockMovementIds || stockMovementIds.length === 0)) {
+
+    if ((!riceProductionIds || riceProductionIds.length === 0) &&
+      (!stockMovementIds || stockMovementIds.length === 0)) {
       return res.json({
         success: true,
         data: { entries: {} }
       });
+    }
+
+    // SAFE CACHING: Create cache key based on sorted IDs
+    const sortedProdIds = [...riceProductionIds].sort((a, b) => a - b);
+    const sortedMoveIds = [...stockMovementIds].sort((a, b) => a - b);
+    const cacheKey = `rice-hamali-batch:${sortedProdIds.join(',')}:${sortedMoveIds.join(',')}`;
+
+    // Try cache first (safe - won't crash on error)
+    try {
+      const cachedData = await cacheService.get(cacheKey);
+      if (cachedData) {
+        return res.json({
+          success: true,
+          data: cachedData,
+          fromCache: true
+        });
+      }
+    } catch (cacheError) {
+      console.warn('Rice hamali batch cache read failed (safe):', cacheError.message);
     }
 
     // Check if rice_hamali_entries table exists first
@@ -37,7 +57,7 @@ router.post('/batch', auth, async (req, res) => {
     // Fetch entries for rice productions
     if (riceProductionIds.length > 0) {
       const prodPlaceholders = riceProductionIds.map((_, index) => `$${index + 1}`).join(',');
-      
+
       const [prodEntries] = await sequelize.query(`
         SELECT 
           rhe.id,
@@ -79,7 +99,7 @@ router.post('/batch', auth, async (req, res) => {
     // Fetch entries for stock movements
     if (stockMovementIds.length > 0) {
       const movePlaceholders = stockMovementIds.map((_, index) => `$${index + 1}`).join(',');
-      
+
       const [moveEntries] = await sequelize.query(`
         SELECT 
           rhe.id,
@@ -120,14 +140,23 @@ router.post('/batch', auth, async (req, res) => {
       });
     }
 
+    const responseData = { entries: groupedEntries };
+
+    // SAFE CACHE SET (won't crash on error)
+    try {
+      await cacheService.set(cacheKey, responseData, 30); // 30 second cache
+    } catch (cacheError) {
+      console.warn('Rice hamali batch cache write failed (safe):', cacheError.message);
+    }
+
     res.json({
       success: true,
-      data: { entries: groupedEntries }
+      data: responseData
     });
   } catch (error) {
     console.error('Error fetching rice hamali entries batch:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: 'Failed to fetch rice hamali entries',
       details: error.message
     });
@@ -141,9 +170,9 @@ router.post('/bulk', auth, async (req, res) => {
 
     // Validate required fields
     if ((!riceProductionId && !stockMovementId) || !entries || !Array.isArray(entries) || entries.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Rice production ID or stock movement ID and entries array are required' 
+      return res.status(400).json({
+        success: false,
+        error: 'Rice production ID or stock movement ID and entries array are required'
       });
     }
 
@@ -167,7 +196,7 @@ router.post('/bulk', auth, async (req, res) => {
 
       totalBags = stockMovement[0].total_bags;
       referenceId = stockMovementId;
-      
+
       console.log('✅ Processing hamali for stock movement:', { stockMovementId, movementType, totalBags });
     } else {
       // Handle regular rice production
@@ -186,23 +215,23 @@ router.post('/bulk', auth, async (req, res) => {
 
       totalBags = riceProduction[0].total_bags;
       referenceId = riceProductionId;
-      
+
       console.log('✅ Processing hamali for rice production:', { riceProductionId, totalBags });
     }
 
     const transaction = await sequelize.transaction();
-    
+
     try {
       const createdEntries = [];
-      
+
       for (const entry of entries) {
         const { workType, workDetail, rate, bags, workerName, batchNumber } = entry;
-        
+
         // Validate entry fields
         if (!workType || !workDetail || !rate || !bags) {
           throw new Error('Each entry must have workType, workDetail, rate, and bags');
         }
-        
+
         // Find the rice hamali rate ID based on work type and detail
         const [rateResult] = await sequelize.query(`
           SELECT id FROM rice_hamali_rates 
@@ -243,18 +272,18 @@ router.post('/bulk', auth, async (req, res) => {
           ],
           transaction
         });
-        
+
         createdEntries.push(result[0]);
       }
-      
+
       await transaction.commit();
-      
+
       res.json({
         success: true,
         message: `${createdEntries.length} rice hamali entries created successfully`,
         data: { entries: createdEntries }
       });
-      
+
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -262,9 +291,9 @@ router.post('/bulk', auth, async (req, res) => {
 
   } catch (error) {
     console.error('Error creating bulk rice hamali entries:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message || 'Failed to create rice hamali entries' 
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to create rice hamali entries'
     });
   }
 });

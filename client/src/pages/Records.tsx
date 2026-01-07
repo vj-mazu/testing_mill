@@ -6014,6 +6014,19 @@ const Records: React.FC = () => {
                   // Store pre-computed data
                   preComputedStock.set(d, { openingWarehouse, openingProduction, closingWarehouse, closingProduction });
 
+                  // DEBUG: Log stock totals for this date
+                  const openingWarehouseTotal = Object.values(openingWarehouse).reduce((sum: number, item: any) => sum + (item.bags || 0), 0);
+                  const openingProductionTotal = Object.values(openingProduction).reduce((sum: number, item: any) => sum + (item.bags || 0), 0);
+                  const closingWarehouseTotal = Object.values(closingWarehouse).reduce((sum: number, item: any) => sum + (item.bags || 0), 0);
+                  const closingProductionTotal = Object.values(closingProduction).reduce((sum: number, item: any) => sum + (item.bags || 0), 0);
+
+                  const purchasesToday = dayRecords.filter((r: Arrival) => r.movementType === 'purchase' && !r.outturnId).reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
+                  const forProdToday = dayRecords.filter((r: Arrival) => r.movementType === 'purchase' && r.outturnId).reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
+                  const prodShiftingToday = dayRecords.filter((r: Arrival) => r.movementType === 'production-shifting').reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
+                  const riceDeductToday = dayRiceProds.filter((rp: any) => rp.movementType !== 'loading').reduce((sum: number, rp: any) => sum + (rp.paddyBagsDeducted || 0), 0);
+
+                  console.log(`📊 [${d}] Opening: W=${openingWarehouseTotal} P=${openingProductionTotal} | Purchases: ${purchasesToday} ForProd: ${forProdToday} ProdShift: ${prodShiftingToday} RiceDeduct: ${riceDeductToday} | Closing: W=${closingWarehouseTotal} P=${closingProductionTotal} | Total: ${closingWarehouseTotal + closingProductionTotal}`);
+
                   // Update running stock for NEXT day's opening
                   runningWarehouse = deepCopy(closingWarehouse);
                   runningProduction = deepCopy(closingProduction);
@@ -6070,21 +6083,22 @@ const Records: React.FC = () => {
                       productionShiftingItems.reduce((sum: number, item: any) => sum + item.bags, 0);
 
                     // Calculate net movements (purchases add, rice production subtracts)
+                    // FIX: Don't double-count for-production purchases - they're already in purchases total
                     const purchases = dateRecords.filter((r: Arrival) => r.movementType === 'purchase')
                       .reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
-                    const riceProduction = todayRiceProductions.reduce((sum: number, rp: any) => sum + (rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '')), 0);
-                    const forProduction = dateRecords.filter((r: Arrival) => r.movementType === 'purchase' && r.outturnId)
-                      .reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
+                    const riceProductionDeduction = todayRiceProductions
+                      .filter((rp: any) => rp.movementType !== 'loading')
+                      .reduce((sum: number, rp: any) => sum + (rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '')), 0);
 
-                    const expectedClosing = openingTotal + purchases + forProduction - riceProduction;
+                    // Expected closing = opening + all purchases - rice production deductions
+                    const expectedClosing = openingTotal + purchases - riceProductionDeduction;
 
                     // Allow small rounding differences (< 1 bag)
                     if (Math.abs(closingTotal - expectedClosing) > 0.5) {
                       console.warn(`[${date}] Stock calculation mismatch detected:`, {
                         opening: openingTotal,
                         purchases,
-                        forProduction,
-                        riceProduction,
+                        riceProductionDeduction,
                         expectedClosing,
                         actualClosing: closingTotal,
                         difference: closingTotal - expectedClosing

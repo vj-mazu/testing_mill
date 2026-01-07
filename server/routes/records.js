@@ -7,6 +7,7 @@ const { Warehouse, Kunchinittu } = require('../models/Location');
 const User = require('../models/User');
 const Outturn = require('../models/Outturn');
 const PurchaseRate = require('../models/PurchaseRate');
+const cacheService = require('../services/cacheService');
 
 const router = express.Router();
 
@@ -402,7 +403,7 @@ router.get('/shifting', auth, async (req, res) => {
   }
 });
 
-// Get paddy stock - OPTIMIZED with month-wise pagination
+// Get paddy stock - OPTIMIZED with CACHING and month-wise pagination
 router.get('/stock', auth, async (req, res) => {
   const startTime = Date.now();
 
@@ -411,8 +412,29 @@ router.get('/stock', auth, async (req, res) => {
       month, // Format: YYYY-MM
       dateFrom,
       dateTo,
-      limit
+      limit,
+      showAll,
+      status,
+      page
     } = req.query;
+
+    // SAFE CACHING: Create cache key based on query params
+    const cacheKey = `stock:${month || ''}:${dateFrom || ''}:${dateTo || ''}:${limit || ''}:${showAll || ''}:${status || ''}:${page || '1'}`;
+
+    // Try cache first (safe - won't crash on error)
+    try {
+      const cachedData = await cacheService.get(cacheKey);
+      if (cachedData) {
+        const responseTime = Date.now() - startTime;
+        return res.json({
+          ...cachedData,
+          performance: { responseTime: `${responseTime}ms`, cached: true }
+        });
+      }
+    } catch (cacheError) {
+      console.warn('Cache read failed (safe fallback):', cacheError.message);
+      // Continue without cache - don't crash
+    }
 
     const where = {
       status: 'approved',
@@ -447,8 +469,8 @@ router.get('/stock', auth, async (req, res) => {
     const limitNum = limit ? Math.min(parseInt(limit), 10000) : 250;
 
     // Add pagination support with offset
-    const page = parseInt(req.query.page) || 1;
-    const offset = (page - 1) * limitNum;
+    const pageNum = parseInt(page) || 1;
+    const offset = (pageNum - 1) * limitNum;
 
     // Get total count for pagination
     const totalCount = await Arrival.count({ where });
@@ -521,7 +543,7 @@ router.get('/stock', auth, async (req, res) => {
 
     console.log(`✅ Stock query completed in ${responseTime}ms: ${filteredRows.length} records returned`);
 
-    res.json({
+    const responseData = {
       records: groupedByDate,
       pagination: {
         currentMonth: month || null,
@@ -529,17 +551,26 @@ router.get('/stock', auth, async (req, res) => {
         totalRecords: totalCount,
         recordsReturned: filteredRows.length,
         limit: limitNum,
-        page: page,
+        page: pageNum,
         totalPages: totalPages,
-        hasNextPage: page < totalPages,
-        hasPrevPage: page > 1,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
         truncated: false // No longer truncating, using proper pagination
       },
       performance: {
         responseTime: `${responseTime}ms`,
         recordsReturned: filteredRows.length
       }
-    });
+    };
+
+    // SAFE CACHE SET (won't crash on error)
+    try {
+      await cacheService.set(cacheKey, responseData, 30); // 30 second cache
+    } catch (cacheError) {
+      console.warn('Cache write failed (safe fallback):', cacheError.message);
+    }
+
+    res.json(responseData);
   } catch (error) {
     console.error('Get stock error:', error);
     console.error('Error details:', {
