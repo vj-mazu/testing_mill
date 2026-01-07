@@ -967,54 +967,47 @@ router.get('/opening-balance', auth, async (req, res) => {
         SUM(activity.bags_change) as bags
       FROM (
         -- Purchases IN (+)
-        SELECT 
-          variety,
+        -- Unified activity for warehouse stock
+        SELECT
+          TRIM(a.variety) as variety,
           COALESCE(tk.code, '') || ' - ' || COALESCE(tw.name, '') as location,
-          bags as bags_change
+          a.bags as bags_change
         FROM arrivals a
         LEFT JOIN kunchinittus tk ON a."toKunchinintuId" = tk.id
         LEFT JOIN warehouses tw ON a."toWarehouseId" = tw.id
-        LEFT JOIN outturns o ON a."outturnId" = o.id
         WHERE a.date < $1
           AND a.status = 'approved'
           AND a."adminApprovedBy" IS NOT NULL
           AND a."movementType" = 'purchase'
-          AND a."outturnId" IS NULL
-          AND (o.id IS NULL OR o."isCleared" = false OR o."clearedAt" IS NULL OR a.date <= DATE(o."clearedAt"))
-        
+          AND a."outturnId" IS NULL -- Normal purchase to warehouse
+
         UNION ALL
-        
-        -- Shifting IN (+)
-        SELECT 
-          variety,
+
+        SELECT
+          TRIM(a.variety) as variety,
           COALESCE(tk.code, '') || ' - ' || COALESCE(tw.name, '') as location,
-          bags as bags_change
+          a.bags as bags_change
         FROM arrivals a
         LEFT JOIN kunchinittus tk ON a."toKunchinintuId" = tk.id
         LEFT JOIN warehouses tw ON a."toWarehouseShiftId" = tw.id
-        LEFT JOIN outturns o ON a."outturnId" = o.id
         WHERE a.date < $1
           AND a.status = 'approved'
           AND a."adminApprovedBy" IS NOT NULL
-          AND a."movementType" = 'shifting'
-          AND (o.id IS NULL OR o."isCleared" = false OR o."clearedAt" IS NULL OR a.date <= DATE(o."clearedAt"))
+          AND a."movementType" = 'shifting' -- Shifting IN to warehouse
 
         UNION ALL
 
-        -- Shifting/Production OUT (-)
-        SELECT 
-          variety,
+        SELECT
+          TRIM(a.variety) as variety,
           COALESCE(fk.code, '') || ' - ' || COALESCE(fw.name, '') as location,
-          -bags as bags_change
+          -a.bags as bags_change
         FROM arrivals a
         LEFT JOIN kunchinittus fk ON a."fromKunchinintuId" = fk.id
         LEFT JOIN warehouses fw ON a."fromWarehouseId" = fw.id
-        LEFT JOIN outturns o ON a."outturnId" = o.id
         WHERE a.date < $1
           AND a.status = 'approved'
           AND a."adminApprovedBy" IS NOT NULL
-          AND a."movementType" IN ('shifting', 'production-shifting')
-          AND (o.id IS NULL OR o."isCleared" = false OR o."clearedAt" IS NULL OR a.date <= DATE(o."clearedAt"))
+          AND a."movementType" IN ('shifting', 'production-shifting') -- Shifting OUT or Production-Shifting OUT from warehouse
       ) activity
       GROUP BY TRIM(activity.variety), activity.location
       HAVING SUM(activity.bags_change) > 0
@@ -1023,16 +1016,16 @@ router.get('/opening-balance', auth, async (req, res) => {
     // PRODUCTION STOCK: Calculate bags in outturns
     // Consolidated approach: Union all movements (IN as +, OUT as -) then GROUP BY
     const productionStockQuery = `
-      SELECT 
+      SELECT
         TRIM(activity.variety) as variety,
         activity.outturn,
         SUM(activity.bags_change) as bags
       FROM (
         -- For-Production Purchase + Production-Shifting IN (+)
-        SELECT 
-          variety,
+        SELECT
+          TRIM(a.variety) as variety,
           COALESCE(o.code, 'OUT' || a."outturnId") as outturn,
-          bags as bags_change
+          a.bags as bags_change
         FROM arrivals a
         LEFT JOIN outturns o ON a."outturnId" = o.id
         WHERE a.date < $1
@@ -1043,19 +1036,21 @@ router.get('/opening-balance', auth, async (req, res) => {
             OR a."movementType" = 'production-shifting'
           )
           AND (o.id IS NULL OR o."isCleared" = false OR o."clearedAt" IS NULL OR a.date <= DATE(o."clearedAt"))
-          
+
         UNION ALL
 
         -- Rice Production paddyBagsDeducted OUT (-)
-        SELECT 
-          o."allottedVariety" as variety,
+        SELECT
+          TRIM(o."allottedVariety") as variety,
           o.code as outturn,
-          -rp."paddyBagsDeducted" as bags_change
+          -SUM(COALESCE(rp."paddyBagsDeducted", ROUND(rp."quantityQuintals" * 3))) as bags_change
         FROM rice_productions rp
-        LEFT JOIN outturns o ON rp."outturnId" = o.id
-        WHERE rp.date < $1
-          AND rp.status = 'approved'
+        JOIN outturns o ON rp."outturnId" = o.id
+        WHERE rp.status = 'approved'
+          AND rp.date < $1
+          AND rp."productType" IN ('Rice', 'Rice Broken', 'Broken', 'Sizer Broken', 'Steam Rice', 'Raw Rice', 'Boiled Rice')
           AND (o."isCleared" = false OR o."clearedAt" IS NULL OR rp.date <= DATE(o."clearedAt"))
+        GROUP BY TRIM(o."allottedVariety"), o.code
       ) activity
       GROUP BY TRIM(activity.variety), activity.outturn
       HAVING SUM(activity.bags_change) > 0

@@ -5861,17 +5861,25 @@ const Records: React.FC = () => {
                 // Keep dates in chronological order for calculation
                 const datesChronological = [...allUniqueDates]; // Already sorted oldest first
 
-                // Helper to normalize keys (pipe separator)
+                // Helper to normalize keys (pipe separator and TRIM/UPPERCASE)
                 const normalizeKeyFn = (key: string, variety: string): string => {
-                  if (key.includes('|')) return key;
+                  const normalizedVariety = (variety || '').trim().toUpperCase();
+                  if (key.includes('|')) {
+                    const parts = key.split('|');
+                    const locationOrOutturn = parts[parts.length - 1];
+                    return `${normalizedVariety}|${locationOrOutturn}`;
+                  }
+
                   if (key.startsWith(variety + '-')) {
-                    return variety + '|' + key.substring(variety.length + 1);
+                    // variety-loc -> VARIETY|loc
+                    return normalizedVariety + '|' + key.substring(variety.length + 1);
                   }
                   const firstHyphenIndex = key.indexOf('-');
                   if (firstHyphenIndex > 0) {
-                    return key.substring(0, firstHyphenIndex) + '|' + key.substring(firstHyphenIndex + 1);
+                    // some-variety-loc -> SOME VARIETY|loc
+                    return normalizedVariety + '|' + key.substring(firstHyphenIndex + 1);
                   }
-                  return key;
+                  return normalizedVariety + '|' + key;
                 };
 
                 // Helper to find outturn key
@@ -5929,12 +5937,14 @@ const Records: React.FC = () => {
                 const preComputeStartDate = dateFrom ? convertDateFormat(dateFrom) : '';
                 if (historicalOpeningBalance && dateFrom) {
                   Object.entries(historicalOpeningBalance.warehouseBalance).forEach(([key, value]) => {
-                    const nKey = normalizeKeyFn(key, value.variety);
-                    runningWarehouse[nKey] = { bags: value.bags, variety: value.variety, location: value.location };
+                    const nVariety = (value.variety || '').trim().toUpperCase();
+                    const nKey = normalizeKeyFn(key, nVariety);
+                    runningWarehouse[nKey] = { bags: value.bags, variety: nVariety, location: value.location };
                   });
                   Object.entries(historicalOpeningBalance.productionBalance).forEach(([key, value]) => {
-                    const nKey = normalizeKeyFn(key, value.variety);
-                    runningProduction[nKey] = { bags: value.bags, variety: value.variety, outturn: value.outturn, kunchinittu: '' };
+                    const nVariety = (value.variety || '').trim().toUpperCase();
+                    const nKey = normalizeKeyFn(key, nVariety);
+                    runningProduction[nKey] = { bags: value.bags, variety: nVariety, outturn: value.outturn, kunchinittu: '' };
                   });
                   console.log('📊 Pre-compute: Initialized from historical balance', Object.keys(runningWarehouse).length, 'warehouse,', Object.keys(runningProduction).length, 'production');
                 }
@@ -5955,7 +5965,7 @@ const Records: React.FC = () => {
 
                   // Apply arrivals to closing stock
                   dayRecords.forEach((rec: Arrival) => {
-                    const variety = rec.variety || 'Unknown';
+                    const variety = (rec.variety || 'Unknown').trim().toUpperCase();
 
                     if (rec.movementType === 'purchase') {
                       if (!rec.outturnId) {
@@ -6175,8 +6185,8 @@ const Records: React.FC = () => {
 
                       {/* Calculate kunchinittu stock BEFORE layout so both columns can use it */}
                       {(() => {
-                        // Use the already-calculated openingProductionShifting
-                        const productionShiftingBags = openingProductionShifting;
+                        // Use a deep copy to ensure summary table doesn't suffer from mutation leakage
+                        const productionShiftingBags = deepCopy(openingProductionShifting);
 
                         // Calculate kunchinittu-wise stock (regular stock, NOT including production-shifting)
                         // Group by kunchinittu only, not by warehouse
