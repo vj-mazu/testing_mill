@@ -1009,8 +1009,8 @@ router.get('/opening-balance', auth, async (req, res) => {
           AND a."adminApprovedBy" IS NOT NULL
           AND a."movementType" IN ('shifting', 'production-shifting') -- Shifting OUT or Production-Shifting OUT from warehouse
       ) activity
-      GROUP BY TRIM(activity.variety), activity.location
-      HAVING SUM(activity.bags_change) > 0
+      GROUP BY UPPER(TRIM(activity.variety)), activity.location
+      HAVING SUM(activity.bags_change) != 0
     `;
 
     // PRODUCTION STOCK: Calculate bags in outturns
@@ -1052,8 +1052,8 @@ router.get('/opening-balance', auth, async (req, res) => {
           AND (o."isCleared" = false OR o."clearedAt" IS NULL OR rp.date <= DATE(o."clearedAt"))
         GROUP BY TRIM(o."allottedVariety"), o.code
       ) activity
-      GROUP BY TRIM(activity.variety), activity.outturn
-      HAVING SUM(activity.bags_change) > 0
+      GROUP BY UPPER(TRIM(activity.variety)), activity.outturn
+      HAVING SUM(activity.bags_change) != 0
     `;
 
     // Execute both queries

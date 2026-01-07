@@ -5901,14 +5901,14 @@ const Records: React.FC = () => {
                   return null;
                 };
 
-                // Helper to update stock safely
+                // Helper to update stock safely (now allows negative)
                 const safeUpdateStock = (stockMap: any, key: string, bags: number, metadata: any): boolean => {
                   if (!stockMap[key]) {
                     stockMap[key] = { ...metadata, bags: 0 };
                   }
                   const newValue = stockMap[key].bags + bags;
-                  stockMap[key].bags = Math.max(0, newValue);
-                  return newValue >= 0;
+                  stockMap[key].bags = newValue;
+                  return true;
                 };
 
                 // Deep copy helper
@@ -5987,32 +5987,22 @@ const Records: React.FC = () => {
                       const fromKey = `${variety}|${fromLoc}`;
                       const toKey = `${variety}|${toLoc}`;
                       const requestedBags = rec.bags || 0;
-                      // FIX: Only move what's actually available at source (to prevent creating extra bags)
-                      const availableAtSource = closingWarehouse[fromKey]?.bags || 0;
-                      const bagsToMove = Math.min(requestedBags, availableAtSource);
+                      // ALLOW FULL SHIFT: Removing availableAtSource check to prevent "losing" bags in outturns
+                      const bagsToMove = requestedBags;
                       safeUpdateStock(closingWarehouse, fromKey, -bagsToMove, { variety, location: fromLoc });
                       safeUpdateStock(closingWarehouse, toKey, bagsToMove, { variety, location: toLoc });
-                      if (bagsToMove < requestedBags) {
-                        console.log(`  🔵 [${d}] SHIFTING: ${bagsToMove}/${requestedBags} ${variety} from ${fromLoc} → ${toLoc} (limited by source)`);
-                      } else {
-                        console.log(`  🔵 [${d}] SHIFTING: ${bagsToMove} ${variety} from ${fromLoc} → ${toLoc}`);
-                      }
+                      console.log(`  🔵 [${d}] SHIFTING: ${bagsToMove} ${variety} from ${fromLoc} → ${toLoc}`);
                     } else if (rec.movementType === 'production-shifting') {
                       const fromLoc = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
                       const fromKey = `${variety}|${fromLoc}`;
                       const outturn = rec.outturn?.code || '';
                       const prodKey = `${variety}|${outturn}`;
                       const requestedBags = rec.bags || 0;
-                      // FIX: Only move what's actually available at source (to prevent creating extra bags)
-                      const availableAtSource = closingWarehouse[fromKey]?.bags || 0;
-                      const bagsToMove = Math.min(requestedBags, availableAtSource);
+                      // ALLOW FULL SHIFT: Removing availableAtSource check to prevent "losing" bags in outturns
+                      const bagsToMove = requestedBags;
                       safeUpdateStock(closingWarehouse, fromKey, -bagsToMove, { variety, location: fromLoc });
                       safeUpdateStock(closingProduction, prodKey, bagsToMove, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || '' });
-                      if (bagsToMove < requestedBags) {
-                        console.log(`  🟡 [${d}] PROD-SHIFTING: ${bagsToMove}/${requestedBags} ${variety} from Warehouse(${fromLoc}) → Production(${outturn}) (limited by source)`);
-                      } else {
-                        console.log(`  🟡 [${d}] PROD-SHIFTING: ${bagsToMove} ${variety} from Warehouse(${fromLoc}) → Production(${outturn})`);
-                      }
+                      console.log(`  🟡 [${d}] PROD-SHIFTING: ${bagsToMove} ${variety} from Warehouse(${fromLoc}) → Production(${outturn})`);
                     } else {
                       console.log(`  ⚪ [${d}] UNKNOWN: ${rec.movementType} - ${rec.bags} ${variety}`);
                     }
@@ -6027,18 +6017,16 @@ const Records: React.FC = () => {
                     }
                     const matchedKey = findOutturnKey(closingProduction, outturnCode);
                     if (matchedKey && closingProduction[matchedKey]) {
-                      // Use stored deduction or calculate fresh
-                      const dbValue = rp.paddyBagsDeducted || 0;
-                      const calcValue = calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
-                      const deducted = dbValue || calcValue;
+                      // Only subtract for paddy-consuming products (Matching backend precision)
+                      const productType = rp.productType || '';
+                      const isPaddyConsuming = ['Rice', 'Rice Broken', 'Broken', 'Sizer Broken', 'Steam Rice', 'Raw Rice', 'Boiled Rice'].includes(productType);
 
-                      const beforeBags = closingProduction[matchedKey].bags;
-                      closingProduction[matchedKey].bags = Math.max(0, closingProduction[matchedKey].bags - deducted);
-
-                      if (rp.movementType === 'loading') {
-                        console.log(`  🟠 [${d}] RICE-LOADING: -${deducted} from Production(${outturnCode}) [${beforeBags} → ${closingProduction[matchedKey].bags}] (Q=${rp.quantityQuintals})`);
+                      if (isPaddyConsuming) {
+                        const deducted = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, productType);
+                        closingProduction[matchedKey].bags = closingProduction[matchedKey].bags - deducted;
+                        console.log(`  🔴 [${d}] RICE-PROD (${outturnCode}): -${deducted} bags (Variety: ${rp.variety})`);
                       } else {
-                        console.log(`  🔴 [${d}] RICE-PROD: -${deducted} from Production(${outturnCode}) [${beforeBags} → ${closingProduction[matchedKey].bags}] (db=${dbValue}, calc=${calcValue})`);
+                        console.log(`  ⚪ [${d}] RICE-PROD (SKIPPED - ${productType}): ${rp.quantityQuintals}Q from ${outturnCode}`);
                       }
                     } else {
                       console.log(`  ⚠️ [${d}] RICE-PROD (NO MATCH): ${outturnCode} - paddyDeducted: ${rp.paddyBagsDeducted}`);
@@ -6129,23 +6117,31 @@ const Records: React.FC = () => {
 
                     // Calculate net movements (purchases add, rice production subtracts)
                     // FIX: Don't double-count for-production purchases - they're already in purchases total
-                    const purchases = dateRecords.filter((r: Arrival) => r.movementType === 'purchase')
+                    const totalPurchasesInconsistency = dateRecords.filter((r: Arrival) => r.movementType === 'purchase')
                       .reduce((sum: number, r: Arrival) => sum + (r.bags || 0), 0);
-                    const riceProductionDeduction = todayRiceProductions
-                      .reduce((sum: number, rp: any) => sum + (rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '')), 0);
+
+                    const totalDeductionsInconsistency = todayRiceProductions.reduce((sum: number, rp: any) => {
+                      const productType = rp.productType || '';
+                      const isPaddyConsuming = ['Rice', 'Rice Broken', 'Broken', 'Sizer Broken', 'Steam Rice', 'Raw Rice', 'Boiled Rice'].includes(productType);
+                      if (!isPaddyConsuming) return sum;
+                      return sum + (rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, productType));
+                    }, 0);
+
+                    const actualClosing = Object.values(closingStockByKey).reduce((s: number, i: any) => s + (i.bags || 0), 0) +
+                      Object.values(productionShiftingClosing).reduce((s: number, i: any) => s + (i.bags || 0), 0);
 
                     // Expected closing = opening + all purchases - rice production deductions
-                    const expectedClosing = openingTotal + purchases - riceProductionDeduction;
+                    const expectedClosing = openingTotal + totalPurchasesInconsistency - totalDeductionsInconsistency;
 
                     // Allow small rounding differences (< 1 bag)
-                    if (Math.abs(closingTotal - expectedClosing) > 0.5) {
+                    if (Math.abs(actualClosing - expectedClosing) > 0.5) {
                       console.warn(`[${date}] Stock calculation mismatch detected:`, {
                         opening: openingTotal,
-                        purchases,
-                        riceProductionDeduction,
+                        purchases: totalPurchasesInconsistency,
+                        riceProductionDeduction: totalDeductionsInconsistency,
                         expectedClosing,
-                        actualClosing: closingTotal,
-                        difference: closingTotal - expectedClosing
+                        actualClosing: actualClosing,
+                        difference: actualClosing - expectedClosing
                       });
                     }
                   })();
@@ -7088,7 +7084,7 @@ const Records: React.FC = () => {
                                   });
 
                                   const sortedKunchinintuVarieties = Object.entries(kunchinintuVarietyMap)
-                                    .filter(([_, bags]) => bags > 0)
+                                    .filter(([_, bags]) => bags !== 0) // Show all non-zero stock (even negative to highlight data issues)
                                     .sort((a, b) => a[0].localeCompare(b[0]));
 
                                   const sortedProductionEntries = Object.values(productionVarietyMap)
