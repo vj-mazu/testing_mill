@@ -6105,8 +6105,8 @@ const Records: React.FC = () => {
                   // ═══════════════════════════════════════════════════════════════════════════
                   // CLOSING STOCK IS PRE-COMPUTED - Just filter for display
                   // ═══════════════════════════════════════════════════════════════════════════
-                  const closingStockItems = Object.values(closingStockByKey).filter((item: any) => item.bags > 0);
-                  const productionShiftingItems = Object.values(productionShiftingClosing).filter((item: any) => item.bags > 0);
+                  const closingStockItems = Object.values(closingStockByKey).filter((item: any) => item.bags !== 0);
+                  const productionShiftingItems = Object.values(productionShiftingClosing).filter((item: any) => item.bags !== 0);
 
                   // Consistency check: Validate stock calculations
                   (() => {
