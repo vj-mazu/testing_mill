@@ -1048,7 +1048,7 @@ router.get('/opening-balance', auth, async (req, res) => {
         JOIN outturns o ON rp."outturnId" = o.id
         WHERE rp.status = 'approved'
           AND rp.date < $1
-          AND rp."productType" IN ('Rice', 'Rice Broken', 'Broken', 'Sizer Broken', 'Steam Rice', 'Raw Rice', 'Boiled Rice')
+          AND rp."productType" NOT IN ('Bran', 'Farm Bran', 'Faram', 'Farm')
           AND (o."isCleared" = false OR o."clearedAt" IS NULL OR rp.date <= DATE(o."clearedAt"))
         GROUP BY TRIM(o."allottedVariety"), o.code
       ) activity

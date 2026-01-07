@@ -1180,8 +1180,8 @@ const Records: React.FC = () => {
 
   // Helper function to calculate paddy bags deducted from rice quintals
   const calculatePaddyBagsDeducted = (quintals: number, productType: string): number => {
-    // No deduction for Bran, Farm Bran, and Faram
-    const noDeductionProducts = ['Bran', 'Farm Bran', 'Faram'];
+    // No deduction for Bran, Farm Bran, Faram, and Farm
+    const noDeductionProducts = ['Bran', 'Farm Bran', 'Faram', 'Farm'];
     if (noDeductionProducts.includes(productType)) {
       return 0;
     }
@@ -6019,9 +6019,9 @@ const Records: React.FC = () => {
                     if (matchedKey && closingProduction[matchedKey]) {
                       // Only subtract for paddy-consuming products (Matching backend precision)
                       const productType = rp.productType || '';
-                      const isPaddyConsuming = ['Rice', 'Rice Broken', 'Broken', 'Sizer Broken', 'Steam Rice', 'Raw Rice', 'Boiled Rice'].includes(productType);
+                      const isNonPaddyProduct = ['Bran', 'Farm Bran', 'Faram', 'Farm'].includes(productType);
 
-                      if (isPaddyConsuming) {
+                      if (!isNonPaddyProduct) {
                         const deducted = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, productType);
                         closingProduction[matchedKey].bags = closingProduction[matchedKey].bags - deducted;
                         console.log(`  🔴 [${d}] RICE-PROD (${outturnCode}): -${deducted} bags (Variety: ${rp.variety})`);
@@ -6122,8 +6122,8 @@ const Records: React.FC = () => {
 
                     const totalDeductionsInconsistency = todayRiceProductions.reduce((sum: number, rp: any) => {
                       const productType = rp.productType || '';
-                      const isPaddyConsuming = ['Rice', 'Rice Broken', 'Broken', 'Sizer Broken', 'Steam Rice', 'Raw Rice', 'Boiled Rice'].includes(productType);
-                      if (!isPaddyConsuming) return sum;
+                      const isNonPaddyProduct = ['Bran', 'Farm Bran', 'Faram', 'Farm'].includes(productType);
+                      if (isNonPaddyProduct) return sum;
                       return sum + (rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, productType));
                     }, 0);
 
