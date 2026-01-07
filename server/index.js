@@ -688,6 +688,15 @@ const startServer = async () => {
         console.log('⚠️ Migration 48 warning:', error.message);
       }
 
+      // Migration 49: Add h_calculation_method to purchase_rates
+      try {
+        const addHCalculationMethod = require('./migrations/47_add_h_calculation_method_to_purchase_rates');
+        await addHCalculationMethod();
+        console.log('✅ Migration 49: h_calculation_method added to purchase_rates');
+      } catch (error) {
+        console.log('⚠️ Migration 49 warning:', error.message);
+      }
+
       console.log('✅ Migrations completed.');
     } catch (error) {
       console.log('⚠️ Migrations warning:', error.message);

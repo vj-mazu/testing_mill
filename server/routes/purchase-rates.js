@@ -113,13 +113,14 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
       bCalculationMethod,
       lf = 0,
       lfCalculationMethod,
-      egb = 0
+      egb = 0,
+      hCalculationMethod = 'per_bag'
     } = req.body;
 
     // Validate required fields
-    if (!arrivalId || !baseRate || !rateType || !bCalculationMethod || !lfCalculationMethod) {
+    if (!arrivalId || !baseRate || !rateType || !bCalculationMethod || !lfCalculationMethod || !hCalculationMethod) {
       return res.status(400).json({
-        error: 'Missing required fields: arrivalId, baseRate, rateType, bCalculationMethod, lfCalculationMethod'
+        error: 'Missing required fields: arrivalId, baseRate, rateType, bCalculationMethod, lfCalculationMethod, hCalculationMethod'
       });
     }
 
@@ -154,6 +155,9 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
     if (!['per_bag', 'per_quintal'].includes(lfCalculationMethod)) {
       return res.status(400).json({ error: 'Invalid LF calculation method' });
     }
+    if (!['per_bag', 'per_quintal'].includes(hCalculationMethod)) {
+      return res.status(400).json({ error: 'Invalid H calculation method' });
+    }
 
     // Check if arrival exists and is a purchase record
     const arrival = await Arrival.findByPk(arrivalId);
@@ -167,6 +171,7 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
     // Get arrival data
     const bags = parseFloat(arrival.bags);
     const actualNetWeight = parseFloat(arrival.netWeight);
+    const actualGrossWeight = parseFloat(arrival.grossWeight);
 
     // Parse input values
     const suteNum = parseFloat(sute);
@@ -176,62 +181,62 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
     const lfNum = parseFloat(lf);
     const egbNum = parseFloat(egb);
 
-    // NEW CALCULATION LOGIC
-    // 1. Calculate Sute Net Weight and Amount based on calculation method
-    let suteNetWeight;
+    // NEW CALCULATION LOGIC (Based on User Confirmation)
+    // 1. Calculate Sute Amount and Sute Net Weight
     let suteAmount;
     if (suteCalculationMethod === 'per_bag') {
-      // Per bag: sute amount = sute value × bags (simple multiplication)
-      // Sute net weight = actual net weight - sute amount (for base rate calculation)
+      // Per bag: sute amount = sute value × bags
       suteAmount = suteNum * bags;
-      suteNetWeight = actualNetWeight - suteAmount;
     } else {
-      // Per quintal: sute amount = (actual net weight ÷ 100) × sute value
-      // Sute net weight = actual net weight (no deduction for quintal method)
-      suteAmount = (actualNetWeight / 100) * suteNum;
-      suteNetWeight = actualNetWeight;
+      // Per quintal: sute amount = (actual gross weight ÷ 100) × sute value
+      suteAmount = (actualGrossWeight / 100) * suteNum;
     }
-
-    // 3. Base Rate Calculation based on calculation method
+    // Base Rate is calculated on SUTE NET WEIGHT (Actual Net Weight - Sute Amount)
+    const suteNetWeight = actualNetWeight - suteAmount;
     let baseRateAmount;
     if (baseRateCalculationMethod === 'per_bag') {
       // Per Bag: (Sute Net Weight ÷ 75) × Base Rate
       baseRateAmount = (suteNetWeight / 75) * baseRateNum;
     } else {
-      // Per Quintal: (Actual Net Weight ÷ 100) × Base Rate (NOT sute net weight)
-      baseRateAmount = (actualNetWeight / 100) * baseRateNum;
+      // Per Quintal: (Actual Gross Weight ÷ 100) × Base Rate
+      baseRateAmount = (actualGrossWeight / 100) * baseRateNum;
     }
 
-    // 4. H (Hamali) Calculation: Bags × H (can be negative)
-    // NEW: Always add hamali value (which can be negative for subtraction)
-    const hAmount = bags * hNum;
+    // 3. H (Hamali) Calculation
+    let hAmount;
+    if (hCalculationMethod === 'per_bag') {
+      hAmount = bags * hNum;
+    } else {
+      // Per quintal: (actual gross weight ÷ 100) × h
+      hAmount = (actualGrossWeight / 100) * hNum;
+    }
 
-    // 5. B Calculation
+    // 4. B (Brokerage) Calculation
     let bAmount;
     if (bCalculationMethod === 'per_bag') {
       bAmount = bags * bNum;
     } else {
-      // per_quintal: (Actual Net Weight ÷ 100) × B
-      bAmount = (actualNetWeight / 100) * bNum;
+      // per_quintal: (actual gross weight ÷ 100) × B
+      bAmount = (actualGrossWeight / 100) * bNum;
     }
 
-    // 6. LF Calculation
+    // 5. LF Calculation
     let lfAmount;
     if (lfCalculationMethod === 'per_bag') {
       lfAmount = bags * lfNum;
     } else {
-      // per_quintal: (Actual Net Weight ÷ 100) × LF
-      lfAmount = (actualNetWeight / 100) * lfNum;
+      // per_quintal: (actual gross weight ÷ 100) × LF
+      lfAmount = (actualGrossWeight / 100) * lfNum;
     }
 
-    // 7. EGB Calculation: Bags × EGB
-    const egbAmount = bags * egbNum;
+    // 6. EGB Calculation: Bags × EGB (Only for CDL/MDL)
+    const showEGB = ['CDL', 'MDL'].includes(rateType);
+    const egbAmount = showEGB ? bags * egbNum : 0;
 
-    // 8. Total Amount = Sum of all calculated amounts (sute is NOT added to total - it's already accounted for via suteNetWeight in baseRateAmount)
+    // 7. Total Amount = Sum of all calculated amounts
     const totalAmount = baseRateAmount + hAmount + bAmount + lfAmount + egbAmount;
 
-    // 8. Average Rate Calculation
-    // NEW: Calculate per 75 kg instead of per kg
+    // 8. Average Rate Calculation (per 75kg)
     const averageRate = (totalAmount / actualNetWeight) * 75;
 
     // Amount formula (display formula - base rate on top, sute on second line, other adjustments follow)
@@ -277,6 +282,7 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
         rateType,
         baseRateCalculationMethod,
         h: hNum,
+        hCalculationMethod,
         b: bNum,
         bCalculationMethod,
         lf: lfNum,
@@ -298,6 +304,7 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
         rateType,
         baseRateCalculationMethod,
         h: hNum,
+        hCalculationMethod,
         b: bNum,
         bCalculationMethod,
         lf: lfNum,

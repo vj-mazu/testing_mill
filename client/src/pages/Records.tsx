@@ -1530,7 +1530,8 @@ const Records: React.FC = () => {
         bCalculationMethod: 'per_bag',
         lf: '0',
         lfCalculationMethod: 'per_bag',
-        egb: '0'
+        egb: '0',
+        hCalculationMethod: 'per_bag'
       });
     } else {
       // Open the form and fetch existing rate if any
@@ -1550,7 +1551,8 @@ const Records: React.FC = () => {
             bCalculationMethod: rate.bCalculationMethod,
             lf: rate.lf.toString(),
             lfCalculationMethod: rate.lfCalculationMethod,
-            egb: rate.egb.toString()
+            egb: rate.egb.toString(),
+            hCalculationMethod: rate.hCalculationMethod || 'per_bag'
           });
         }
       } catch (error) {
@@ -1568,7 +1570,8 @@ const Records: React.FC = () => {
           bCalculationMethod: 'per_bag',
           lf: '0',
           lfCalculationMethod: 'per_bag',
-          egb: '0'
+          egb: '0',
+          hCalculationMethod: 'per_bag'
         });
       }
     }
@@ -1622,7 +1625,8 @@ const Records: React.FC = () => {
         bCalculationMethod: rateFormData.bCalculationMethod,
         lf: parseFloat(rateFormData.lf),
         lfCalculationMethod: rateFormData.lfCalculationMethod,
-        egb: parseFloat(rateFormData.egb)
+        egb: parseFloat(rateFormData.egb),
+        hCalculationMethod: rateFormData.hCalculationMethod
       });
 
       toast.success(isUpdate ? NotificationMessages.purchaseRate.updated : NotificationMessages.purchaseRate.added);
@@ -7685,6 +7689,28 @@ const Records: React.FC = () => {
                                         onChange={(e) => handleRateInputChange('h', e.target.value)}
                                         placeholder="0"
                                       />
+                                      <RateRadioGroup>
+                                        <RateRadioLabel>
+                                          <input
+                                            type="radio"
+                                            name="hCalculationMethod"
+                                            value="per_bag"
+                                            checked={rateFormData.hCalculationMethod === 'per_bag'}
+                                            onChange={(e) => handleRateInputChange('hCalculationMethod', (e.target as HTMLInputElement).value)}
+                                          />
+                                          Bag
+                                        </RateRadioLabel>
+                                        <RateRadioLabel>
+                                          <input
+                                            type="radio"
+                                            name="hCalculationMethod"
+                                            value="per_quintal"
+                                            checked={rateFormData.hCalculationMethod === 'per_quintal'}
+                                            onChange={(e) => handleRateInputChange('hCalculationMethod', (e.target as HTMLInputElement).value)}
+                                          />
+                                          Quintal
+                                        </RateRadioLabel>
+                                      </RateRadioGroup>
                                     </RateFormGroup>
 
                                     <RateFormGroup>
@@ -7779,52 +7805,55 @@ const Records: React.FC = () => {
                                         ₹{(() => {
                                           const bags = record.bags || 0;
                                           const actualNetWeight = parseFloat(record.netWeight.toString());
-                                          const weightInQuintals = actualNetWeight / 100;
+                                          const actualGrossWeight = parseFloat(record.grossWeight?.toString() || '0');
 
-                                          // Calculate sute net weight and amount
-                                          let suteNetWeight = actualNetWeight;
+                                          // 1. Calculate Sute Amount and Sute Net Weight
                                           let suteAmount = 0;
                                           const suteValue = parseFloat(rateFormData.sute || '0');
                                           if (suteValue > 0) {
                                             if (rateFormData.suteCalculationMethod === 'per_bag') {
                                               suteAmount = suteValue * bags;
-                                              suteNetWeight = actualNetWeight - suteAmount;
                                             } else {
-                                              suteAmount = (actualNetWeight / 100) * suteValue;
-                                              suteNetWeight = actualNetWeight;
+                                              suteAmount = (actualGrossWeight / 100) * suteValue;
                                             }
                                           }
+                                          // Sute is always a weight deduction from net weight
+                                          const suteNetWeight = actualNetWeight - suteAmount;
 
-                                          // Base Rate Calculation
+                                          // 2. Base Rate Calculation
                                           let baseRateAmount = 0;
                                           const baseRateValue = parseFloat(rateFormData.baseRate || '0');
                                           if (rateFormData.baseRateCalculationMethod === 'per_bag') {
+                                            // Per Bag: (Sute Net Weight ÷ 75) × Base Rate
                                             baseRateAmount = (suteNetWeight / 75) * baseRateValue;
                                           } else {
-                                            baseRateAmount = (actualNetWeight / 100) * baseRateValue;
+                                            // Per Quintal: (Actual Gross Weight ÷ 100) × Base Rate
+                                            baseRateAmount = (actualGrossWeight / 100) * baseRateValue;
                                           }
 
-                                          // Hamali calculation
-                                          const hamaliValue = parseFloat(rateFormData.h || '0');
-                                          const hamaliAmount = bags * hamaliValue;
+                                          // 3. Hamali calculation
+                                          const hValue = parseFloat(rateFormData.h || '0');
+                                          const hAmount = rateFormData.hCalculationMethod === 'per_bag'
+                                            ? hValue * bags
+                                            : hValue * (actualGrossWeight / 100);
 
-                                          // B calculation
+                                          // 4. B calculation
                                           const bValue = parseFloat(rateFormData.b || '0');
                                           const bAmount = rateFormData.bCalculationMethod === 'per_bag'
                                             ? bValue * bags
-                                            : bValue * weightInQuintals;
+                                            : bValue * (actualGrossWeight / 100);
 
-                                          // LF calculation
+                                          // 5. LF calculation
                                           const lfValue = parseFloat(rateFormData.lf || '0');
                                           const lfAmount = rateFormData.lfCalculationMethod === 'per_bag'
                                             ? lfValue * bags
-                                            : lfValue * weightInQuintals;
+                                            : lfValue * (actualGrossWeight / 100);
 
-                                          // EGB calculation
-                                          const showEGB = rateFormData.rateType === 'CDL' || rateFormData.rateType === 'MDL';
+                                          // 6. EGB calculation
+                                          const showEGB = ['CDL', 'MDL'].includes(rateFormData.rateType);
                                           const egbAmount = showEGB ? bags * parseFloat(rateFormData.egb || '0') : 0;
 
-                                          const totalAmount = baseRateAmount + hamaliAmount + bAmount + lfAmount + egbAmount;
+                                          const totalAmount = baseRateAmount + hAmount + bAmount + lfAmount + egbAmount;
                                           return totalAmount.toFixed(2);
                                         })()}
                                       </RateCalcValue>
