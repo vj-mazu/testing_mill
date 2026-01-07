@@ -5976,21 +5976,33 @@ const Records: React.FC = () => {
                       const toLoc = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouseShift?.name || ''}`;
                       const fromKey = `${variety}|${fromLoc}`;
                       const toKey = `${variety}|${toLoc}`;
-                      const bags = rec.bags || 0;
-                      // FIX: Always move full amount for shifting (transactions are approved)
-                      safeUpdateStock(closingWarehouse, fromKey, -bags, { variety, location: fromLoc });
-                      safeUpdateStock(closingWarehouse, toKey, bags, { variety, location: toLoc });
-                      console.log(`  🔵 [${d}] SHIFTING: ${bags} ${variety} from ${fromLoc} → ${toLoc}`);
+                      const requestedBags = rec.bags || 0;
+                      // FIX: Only move what's actually available at source (to prevent creating extra bags)
+                      const availableAtSource = closingWarehouse[fromKey]?.bags || 0;
+                      const bagsToMove = Math.min(requestedBags, availableAtSource);
+                      safeUpdateStock(closingWarehouse, fromKey, -bagsToMove, { variety, location: fromLoc });
+                      safeUpdateStock(closingWarehouse, toKey, bagsToMove, { variety, location: toLoc });
+                      if (bagsToMove < requestedBags) {
+                        console.log(`  🔵 [${d}] SHIFTING: ${bagsToMove}/${requestedBags} ${variety} from ${fromLoc} → ${toLoc} (limited by source)`);
+                      } else {
+                        console.log(`  🔵 [${d}] SHIFTING: ${bagsToMove} ${variety} from ${fromLoc} → ${toLoc}`);
+                      }
                     } else if (rec.movementType === 'production-shifting') {
                       const fromLoc = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
                       const fromKey = `${variety}|${fromLoc}`;
                       const outturn = rec.outturn?.code || '';
                       const prodKey = `${variety}|${outturn}`;
-                      const bags = rec.bags || 0;
-                      // FIX: Always move full amount for production-shifting (transactions are approved)
-                      safeUpdateStock(closingWarehouse, fromKey, -bags, { variety, location: fromLoc });
-                      safeUpdateStock(closingProduction, prodKey, bags, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || '' });
-                      console.log(`  🟡 [${d}] PROD-SHIFTING: ${bags} ${variety} from Warehouse(${fromLoc}) → Production(${outturn})`);
+                      const requestedBags = rec.bags || 0;
+                      // FIX: Only move what's actually available at source (to prevent creating extra bags)
+                      const availableAtSource = closingWarehouse[fromKey]?.bags || 0;
+                      const bagsToMove = Math.min(requestedBags, availableAtSource);
+                      safeUpdateStock(closingWarehouse, fromKey, -bagsToMove, { variety, location: fromLoc });
+                      safeUpdateStock(closingProduction, prodKey, bagsToMove, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || '' });
+                      if (bagsToMove < requestedBags) {
+                        console.log(`  🟡 [${d}] PROD-SHIFTING: ${bagsToMove}/${requestedBags} ${variety} from Warehouse(${fromLoc}) → Production(${outturn}) (limited by source)`);
+                      } else {
+                        console.log(`  🟡 [${d}] PROD-SHIFTING: ${bagsToMove} ${variety} from Warehouse(${fromLoc}) → Production(${outturn})`);
+                      }
                     } else {
                       console.log(`  ⚪ [${d}] UNKNOWN: ${rec.movementType} - ${rec.bags} ${variety}`);
                     }
