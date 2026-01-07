@@ -5959,13 +5959,17 @@ const Records: React.FC = () => {
 
                     if (rec.movementType === 'purchase') {
                       if (!rec.outturnId) {
+                        // NORMAL PURCHASE (no outturn - goes to warehouse)
                         const location = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouse?.name || ''}`;
                         const key = `${variety}|${location}`;
                         safeUpdateStock(closingWarehouse, key, rec.bags || 0, { variety, location });
+                        console.log(`  🟢 [${d}] PURCHASE: +${rec.bags} ${variety} → Warehouse (${location})`);
                       } else {
+                        // FOR-PRODUCTION PURCHASE (has outturn - goes directly to production)
                         const outturn = rec.outturn?.code || `OUT${rec.outturnId}`;
                         const key = `${variety}|${outturn}`;
                         safeUpdateStock(closingProduction, key, rec.bags || 0, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || 'Direct' });
+                        console.log(`  🟠 [${d}] FOR-PROD PURCHASE: +${rec.bags} ${variety} → Production (${outturn})`);
                       }
                     } else if (rec.movementType === 'shifting') {
                       const fromLoc = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
@@ -5973,30 +5977,44 @@ const Records: React.FC = () => {
                       const fromKey = `${variety}|${fromLoc}`;
                       const toKey = `${variety}|${toLoc}`;
                       const bags = rec.bags || 0;
-                      if (safeUpdateStock(closingWarehouse, fromKey, -bags, { variety, location: fromLoc })) {
-                        safeUpdateStock(closingWarehouse, toKey, bags, { variety, location: toLoc });
-                      }
+                      // FIX: Always move full amount for shifting (transactions are approved)
+                      safeUpdateStock(closingWarehouse, fromKey, -bags, { variety, location: fromLoc });
+                      safeUpdateStock(closingWarehouse, toKey, bags, { variety, location: toLoc });
+                      console.log(`  🔵 [${d}] SHIFTING: ${bags} ${variety} from ${fromLoc} → ${toLoc}`);
                     } else if (rec.movementType === 'production-shifting') {
                       const fromLoc = `${rec.fromKunchinittu?.code || ''} - ${rec.fromWarehouse?.name || ''}`;
                       const fromKey = `${variety}|${fromLoc}`;
                       const outturn = rec.outturn?.code || '';
                       const prodKey = `${variety}|${outturn}`;
                       const bags = rec.bags || 0;
-                      if (safeUpdateStock(closingWarehouse, fromKey, -bags, { variety, location: fromLoc })) {
-                        safeUpdateStock(closingProduction, prodKey, bags, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || '' });
-                      }
+                      // FIX: Always move full amount for production-shifting (transactions are approved)
+                      safeUpdateStock(closingWarehouse, fromKey, -bags, { variety, location: fromLoc });
+                      safeUpdateStock(closingProduction, prodKey, bags, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || '' });
+                      console.log(`  🟡 [${d}] PROD-SHIFTING: ${bags} ${variety} from Warehouse(${fromLoc}) → Production(${outturn})`);
+                    } else {
+                      console.log(`  ⚪ [${d}] UNKNOWN: ${rec.movementType} - ${rec.bags} ${variety}`);
                     }
                   });
 
                   // Subtract rice production from production stock
                   dayRiceProds.forEach((rp: any) => {
-                    if (rp.movementType === 'loading') return;
+                    if (rp.movementType === 'loading') {
+                      console.log(`  ⚪ [${d}] RICE-LOADING (SKIP): ${rp.outturn?.code} - ${rp.quantityQuintals}Q`);
+                      return;
+                    }
                     const outturnCode = rp.outturn?.code || '';
-                    if (!outturnCode) return;
+                    if (!outturnCode) {
+                      console.log(`  ⚪ [${d}] RICE-PROD (NO OUTTURN CODE): ${rp.quantityQuintals}Q`);
+                      return;
+                    }
                     const matchedKey = findOutturnKey(closingProduction, outturnCode);
                     if (matchedKey && closingProduction[matchedKey]) {
                       const deducted = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
+                      const beforeBags = closingProduction[matchedKey].bags;
                       closingProduction[matchedKey].bags = Math.max(0, closingProduction[matchedKey].bags - deducted);
+                      console.log(`  🔴 [${d}] RICE-PROD: -${deducted} from Production(${outturnCode}) [${beforeBags} → ${closingProduction[matchedKey].bags}]`);
+                    } else {
+                      console.log(`  ⚠️ [${d}] RICE-PROD (NO MATCH): ${outturnCode} - paddyDeducted: ${rp.paddyBagsDeducted}`);
                     }
                   });
 
