@@ -45,19 +45,36 @@ router.get('/', auth, async (req, res) => {
 
     const where = {};
 
-    // Date range filters take priority over Month filter
-    if (dateFrom || dateTo) {
-      where.date = {};
-      if (dateFrom) where.date[Op.gte] = dateFrom;
-      if (dateTo) where.date[Op.lte] = dateTo;
-    } else if (month) {
+    // OPTIMIZED: Combined date filtering logic
+    const dateConditions = [];
+
+    // 1. Month-wise filtering
+    if (month) {
       const [year, monthNum] = month.split('-');
-      const startDate = `${year}-${monthNum}-01`;
-      const endDate = new Date(parseInt(year), parseInt(monthNum), 0).toISOString().split('T')[0];
-      where.date = {
+      const startDate = `${year}-${monthNum.padStart(2, '0')}-01`;
+      const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+      const endDate = `${year}-${monthNum.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
+      dateConditions.push({
         [Op.gte]: startDate,
         [Op.lte]: endDate
-      };
+      });
+    }
+
+    // 2. Date Range filtering
+    if (dateFrom || dateTo) {
+      const rangeCondition = {};
+      if (dateFrom) rangeCondition[Op.gte] = dateFrom;
+      if (dateTo) rangeCondition[Op.lte] = dateTo;
+      dateConditions.push(rangeCondition);
+    }
+
+    // Combine conditions if multiple exist
+    if (dateConditions.length > 0) {
+      if (dateConditions.length === 1) {
+        where.date = dateConditions[0];
+      } else {
+        where.date = { [Op.and]: dateConditions };
+      }
     }
 
     if (outturnId) where.outturnId = outturnId;

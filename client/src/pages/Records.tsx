@@ -1052,7 +1052,7 @@ const Records: React.FC = () => {
     if (activeTab === 'stock') {
       fetchOpeningBalance();
     }
-  }, [activeTab, dateFrom]);
+  }, [activeTab, dateFrom, selectedMonth]);
 
   // Refetch rice stock when month or filters change (using month-based filtering only)
   useEffect(() => {
@@ -1104,29 +1104,28 @@ const Records: React.FC = () => {
   }, [selectedOutturnId]);
 
   const fetchOpeningBalance = async () => {
-    // Only fetch for stock tab when we have a dateFrom filter
-    // (month filter has been removed to avoid calculation errors)
-    if (activeTab !== 'stock' || !dateFrom) {
+    // Only fetch for stock tab when we have some date/month filter
+    if (activeTab !== 'stock' || (!dateFrom && !selectedMonth)) {
       setHistoricalOpeningBalance(null);
       return;
     }
 
-    // Validate date format: must be DD-MM-YYYY (10 characters)
-    if (dateFrom.length !== 10 || dateFrom.split('-').length !== 3) {
-      console.log(`⏳ Waiting for complete date format (current: ${dateFrom})`);
-      setHistoricalOpeningBalance(null); // Clear stale data while typing
-      return; // Don't fetch until date is complete
+    // Determine the most restrictive start date (Intersection)
+    let startLimit = dateFrom ? convertDateFormat(dateFrom) : '1970-01-01';
+    if (selectedMonth) {
+      const [year, monthNum] = selectedMonth.split('-');
+      const monthStart = `${year}-${monthNum.padStart(2, '0')}-01`;
+      startLimit = startLimit > monthStart ? startLimit : monthStart;
+    }
+
+    // If startLimit is still 1970, we don't need historical opening (it's from beginning)
+    if (startLimit === '1970-01-01') {
+      setHistoricalOpeningBalance(null);
+      return;
     }
 
     try {
-      // Use the dateFrom as the beforeDate for opening balance calculation
-      const beforeDate = convertDateFormat(dateFrom);
-
-      if (!beforeDate || beforeDate.length !== 10) {
-        console.log(`⚠️ Invalid converted date: ${beforeDate}`);
-        return;
-      }
-
+      const beforeDate = startLimit;
       console.log(`📊 Fetching opening balance before ${beforeDate}...`);
       const response = await axios.get<{
         warehouseBalance: { [key: string]: { variety: string; location: string; bags: number } };
@@ -1149,7 +1148,6 @@ const Records: React.FC = () => {
 
         if (response.data.productionBalance) {
           Object.values(response.data.productionBalance).forEach((item: any) => {
-            // Include outturn code as the unique identifier part
             const key = `${item.variety}|${item.outturn}`;
             standardizedProduction[key] = { ...item };
           });
@@ -1171,11 +1169,10 @@ const Records: React.FC = () => {
     }
   };
 
-  // Fetch historical opening balance when stock tab is active and date range filter is applied
-  // SIMPLIFIED: Only for date range filter (month filter removed from stock tab)
+  // Fetch historical opening balance when stock tab is active and filters change
   useEffect(() => {
     fetchOpeningBalance();
-  }, [activeTab, dateFrom]); // Removed selectedMonth dependency
+  }, [activeTab, dateFrom, selectedMonth]);
 
 
   // Helper function to calculate paddy bags deducted from rice quintals
@@ -1377,21 +1374,22 @@ const Records: React.FC = () => {
         params.page = page;
         params.limit = 250; // Always load 250 records per page
 
-        // Priority: date range filters > month filter > show all records
-        if (dateFrom || dateTo) {
-          // Date range with pagination
-          if (dateFrom) params.dateFrom = convertDateFormat(dateFrom);
-          if (dateTo) params.dateTo = convertDateFormat(dateTo);
-        } else if (selectedMonth) {
-          params.month = selectedMonth;
-        } else if (showAllRecords) {
-          // Show all records with pagination
-          // Don't set any date filters
-        } else {
-          // Business Date logic: Default to today's records only
-          const businessDate = getBusinessDate();
-          params.dateFrom = businessDate;
-          params.dateTo = businessDate;
+        // OPTIMIZED: Support combined month and date range filters
+        if (dateFrom) params.dateFrom = convertDateFormat(dateFrom);
+        if (dateTo) params.dateTo = convertDateFormat(dateTo);
+        if (selectedMonth) params.month = selectedMonth;
+
+        // If no filters are provided, handle the default state
+        if (!dateFrom && !dateTo && !selectedMonth) {
+          if (showAllRecords) {
+            // "Show All" is active - no date filters sent to API (defaults to backend limit)
+            params.showAll = true;
+          } else {
+            // Default to today's records (Business Date)
+            const businessDate = getBusinessDate();
+            params.dateFrom = businessDate;
+            params.dateTo = businessDate;
+          }
         }
       }
 
@@ -2023,13 +2021,10 @@ const Records: React.FC = () => {
           page: riceStockPage
         };
 
-        // Priority: Date Range filters > Month filter
-        if (dateFrom || dateTo) {
-          if (dateFrom) productionsParams.dateFrom = convertDateFormat(dateFrom);
-          if (dateTo) productionsParams.dateTo = convertDateFormat(dateTo);
-        } else if (selectedMonth) {
-          productionsParams.month = selectedMonth;
-        }
+        // OPTIMIZED: Support combined month and date range filters
+        if (dateFrom) productionsParams.dateFrom = convertDateFormat(dateFrom);
+        if (dateTo) productionsParams.dateTo = convertDateFormat(dateTo);
+        if (selectedMonth) productionsParams.month = selectedMonth;
 
         const productionsResponse = await axios.get<{ productions: any[]; pagination?: any }>('/rice-productions', {
           headers: {
@@ -2056,11 +2051,10 @@ const Records: React.FC = () => {
             _t: Date.now() // Cache buster
           };
 
-          // Priority: Date Range filters > Month filter
-          if (dateFrom || dateTo) {
-            if (dateFrom) movementsParams.dateFrom = convertDateFormat(dateFrom);
-            if (dateTo) movementsParams.dateTo = convertDateFormat(dateTo);
-          } else if (selectedMonth) {
+          // OPTIMIZED: Support combined month and date range filters
+          if (dateFrom) movementsParams.dateFrom = convertDateFormat(dateFrom);
+          if (dateTo) movementsParams.dateTo = convertDateFormat(dateTo);
+          if (selectedMonth) {
             const [year, month] = selectedMonth.split('-');
             movementsParams.year = year;
             movementsParams.month = parseInt(month);
@@ -2571,8 +2565,8 @@ const Records: React.FC = () => {
         )}
 
         <FilterRow>
-          {/* Month Selector - NOT for Paddy Stock (removed to avoid calculation errors) */}
-          {(activeTab === 'arrivals' || activeTab === 'purchase' || activeTab === 'shifting' || activeTab === 'rice-stock' || activeTab === 'rice-outturn-report') && (
+          {/* Month Selector - Enabled for all tabs including Paddy Stock */}
+          {(activeTab === 'arrivals' || activeTab === 'purchase' || activeTab === 'shifting' || activeTab === 'stock' || activeTab === 'rice-stock' || activeTab === 'rice-outturn-report') && (
             <FormGroup>
               <Label>Month Filter</Label>
               <Select
@@ -2726,11 +2720,19 @@ const Records: React.FC = () => {
                   return;
                 }
 
-                const dateRangeText = dateFrom && dateTo
-                  ? `${dateFrom} to ${dateTo}`
-                  : selectedMonth
-                    ? availableMonths.find(m => m.month === selectedMonth)?.month_label || selectedMonth
-                    : 'All Records';
+                // OPTIMIZED: Descriptive date range text for reports
+                let dateRangeText = 'All Records';
+                if (dateFrom || dateTo) {
+                  dateRangeText = `${dateFrom || 'Start'} to ${dateTo || 'End'}`;
+                  if (selectedMonth) {
+                    const monthLabel = availableMonths.find(m => m.month === selectedMonth)?.month_label || selectedMonth;
+                    dateRangeText += ` (${monthLabel})`;
+                  }
+                } else if (selectedMonth) {
+                  dateRangeText = availableMonths.find(m => m.month === selectedMonth)?.month_label || selectedMonth;
+                } else if (!showAllRecords) {
+                  dateRangeText = `Today (${getBusinessDate()})`;
+                }
 
                 try {
                   if (activeTab === 'arrivals') {
@@ -2824,14 +2826,14 @@ const Records: React.FC = () => {
                     generateRiceMovementsPDF(riceStockData, {
                       title: 'Rice Stock Movement Report',
                       subtitle: `Filtered View`,
-                      dateRange: `${dateFrom || 'Start'} to ${dateTo || 'End'}`,
+                      dateRange: dateRangeText,
                       filterType: filterType as 'day' | 'week' | 'month'
                     });
                   } else if (activeTab === 'rice-stock') {
                     generateRiceStockPDF(riceStockData, {
                       title: 'Rice Stock Report',
                       subtitle: `Filtered View`,
-                      dateRange: `${dateFrom || 'Start'} to ${dateTo || 'End'}`,
+                      dateRange: dateRangeText,
                       filterType: filterType as 'day' | 'week' | 'month'
                     });
                   } else if (activeTab === 'stock') {
@@ -5832,12 +5834,33 @@ const Records: React.FC = () => {
                 let startDateStr = '';
                 let endDateStr = '';
 
-                if (dateFrom && dateTo) {
-                  // User selected dates - use those
-                  startDateStr = convertDateFormat(dateFrom);
-                  endDateStr = convertDateFormat(dateTo);
+                // OPTIMIZED: Combined date range detection for Paddy Stock
+                if (dateFrom || dateTo || selectedMonth) {
+                  // Initialize with "everlasting" bounds if partially provided
+                  let rangeStart = dateFrom ? convertDateFormat(dateFrom) : '1970-01-01';
+                  let rangeEnd = dateTo ? convertDateFormat(dateTo) : '2099-12-31';
+
+                  // Intersect with Month filter if present
+                  if (selectedMonth) {
+                    const [year, monthNum] = selectedMonth.split('-');
+                    const monthStart = `${year}-${monthNum.padStart(2, '0')}-01`;
+                    const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+                    const monthEnd = `${year}-${monthNum.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
+
+                    // Take the most restrictive bounds (Intersection)
+                    rangeStart = rangeStart > monthStart ? rangeStart : monthStart;
+                    rangeEnd = rangeEnd < monthEnd ? rangeEnd : monthEnd;
+                  }
+
+                  startDateStr = rangeStart;
+                  endDateStr = rangeEnd;
+                } else if (!showAllRecords) {
+                  // Default behavior: Show today only (Business Date)
+                  const today = getBusinessDate();
+                  startDateStr = today;
+                  endDateStr = today;
                 } else if (allUniqueDates.length > 0) {
-                  // Auto-detect from data: use min and max dates
+                  // "Show All" is active: use data bounds
                   startDateStr = allUniqueDates[0];
                   endDateStr = allUniqueDates[allUniqueDates.length - 1];
                 }
@@ -5942,9 +5965,8 @@ const Records: React.FC = () => {
                 let runningWarehouse: { [key: string]: { bags: number; variety: string; location: string } } = {};
                 let runningProduction: { [key: string]: { bags: number; variety: string; outturn: string; kunchinittu: string } } = {};
 
-                // Pre-populate from historical balance if date filter is applied
-                const preComputeStartDate = dateFrom ? convertDateFormat(dateFrom) : '';
-                if (historicalOpeningBalance && dateFrom) {
+                // Pre-populate from historical balance if any filter is applied
+                if (historicalOpeningBalance && (dateFrom || selectedMonth)) {
                   Object.entries(historicalOpeningBalance.warehouseBalance).forEach(([key, value]) => {
                     const nVariety = (value.variety || '').trim().toUpperCase();
                     const nKey = normalizeKeyFn(key, nVariety);
@@ -6925,7 +6947,7 @@ const Records: React.FC = () => {
                                       {/* Rice Production Consumption - RED - GROUPED BY OUTTURN */}
                                       {(() => {
                                         // Group rice productions by outturn
-                                        const riceDeductionByOutturn: { [key: string]: { bags: number; variety: string; outturnCode: string } } = {};
+                                        const riceDeductionByOutturn: { [key: string]: { bags: number; variety: string; outturnCode: string; isClearing: boolean } } = {};
 
                                         todayRiceProductions
                                           .filter((rp: any) => {
@@ -6936,6 +6958,7 @@ const Records: React.FC = () => {
                                           .forEach((rp: any) => {
                                             const outturnCode = rp.outturn?.code || 'UNKNOWN';
                                             const deductedBags = rp.paddyBagsDeducted || calculatePaddyBagsDeducted(rp.quantityQuintals || 0, rp.productType || '');
+                                            const isClearing = rp.locationCode === 'CLEARING';
 
                                             // Get variety
                                             let variety = 'Unknown';
@@ -6962,15 +6985,18 @@ const Records: React.FC = () => {
                                               }
                                             }
 
-                                            // Group by outturn
-                                            if (!riceDeductionByOutturn[outturnCode]) {
-                                              riceDeductionByOutturn[outturnCode] = {
+                                            // Group by outturn and clearing status
+                                            const groupingKey = isClearing ? `${outturnCode}_CLEARING` : outturnCode;
+
+                                            if (!riceDeductionByOutturn[groupingKey]) {
+                                              riceDeductionByOutturn[groupingKey] = {
                                                 bags: 0,
                                                 variety,
-                                                outturnCode
+                                                outturnCode,
+                                                isClearing
                                               };
                                             }
-                                            riceDeductionByOutturn[outturnCode].bags += deductedBags;
+                                            riceDeductionByOutturn[groupingKey].bags += deductedBags;
                                           });
 
                                         const riceDeductionGroups = Object.values(riceDeductionByOutturn);
@@ -6991,11 +7017,11 @@ const Records: React.FC = () => {
                                                     <td style={{
                                                       padding: '4px 8px',
                                                       border: 'none',
-                                                      backgroundColor: '#ff9999',
+                                                      backgroundColor: group.isClearing ? '#fecaca' : '#ff9999',
                                                       fontWeight: 'bold',
                                                       width: '10%',
                                                       textAlign: 'right',
-                                                      color: '#991f1f'
+                                                      color: group.isClearing ? '#991b1b' : '#991f1f'
                                                     }}>
                                                       (-) {group.bags}
                                                     </td>
@@ -7006,7 +7032,7 @@ const Records: React.FC = () => {
                                                       fontWeight: 'bold',
                                                       width: '15%',
                                                       textAlign: 'left',
-                                                      color: '#dc2626'
+                                                      color: group.isClearing ? '#991b1b' : '#dc2626'
                                                     }}>
                                                       {group.variety}
                                                     </td>
@@ -7017,7 +7043,7 @@ const Records: React.FC = () => {
                                                       fontWeight: 'bold',
                                                       width: '75%',
                                                       textAlign: 'left',
-                                                      color: '#dc2626',
+                                                      color: group.isClearing ? '#991b1b' : '#dc2626',
                                                       cursor: 'pointer',
                                                       textDecoration: 'underline'
                                                     }}
@@ -7032,7 +7058,7 @@ const Records: React.FC = () => {
                                                         }
                                                       }}
                                                     >
-                                                      {group.outturnCode} → Rice Production
+                                                      {group.outturnCode} → {group.isClearing ? 'Outturn Cleared (Waste/Loss)' : 'Rice Production'}
                                                     </td>
                                                   </tr>
                                                 );
@@ -7040,6 +7066,7 @@ const Records: React.FC = () => {
                                             </tbody>
                                           </table>
                                         );
+
                                       })()}
 
                                       {/* Loading (Dispatch) Entries - NOT SHOWN IN PADDY STOCK */}

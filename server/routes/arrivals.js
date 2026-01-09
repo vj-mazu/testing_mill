@@ -962,7 +962,7 @@ router.get('/opening-balance', auth, async (req, res) => {
     // Consolidated approach: Union all movements (IN as +, OUT as -) then GROUP BY
     const warehouseStockQuery = `
       SELECT 
-        TRIM(activity.variety) as variety,
+        UPPER(TRIM(activity.variety)) as variety,
         activity.location,
         SUM(activity.bags_change) as bags
       FROM (
@@ -977,9 +977,22 @@ router.get('/opening-balance', auth, async (req, res) => {
         LEFT JOIN warehouses tw ON a."toWarehouseId" = tw.id
         WHERE a.date < $1
           AND a.status = 'approved'
-          AND a."adminApprovedBy" IS NOT NULL
           AND a."movementType" = 'purchase'
           AND a."outturnId" IS NULL -- Normal purchase to warehouse
+
+        UNION ALL
+
+        -- Loose Entries IN (+)
+        SELECT
+          TRIM(a.variety) as variety,
+          COALESCE(tk.code, '') || ' - ' || COALESCE(tw.name, '') as location,
+          a.bags as bags_change
+        FROM arrivals a
+        LEFT JOIN kunchinittus tk ON a."toKunchinintuId" = tk.id
+        LEFT JOIN warehouses tw ON a."toWarehouseId" = tw.id
+        WHERE a.date < $1
+          AND a.status = 'approved'
+          AND a."movementType" = 'loose'
 
         UNION ALL
 
@@ -992,7 +1005,6 @@ router.get('/opening-balance', auth, async (req, res) => {
         LEFT JOIN warehouses tw ON a."toWarehouseShiftId" = tw.id
         WHERE a.date < $1
           AND a.status = 'approved'
-          AND a."adminApprovedBy" IS NOT NULL
           AND a."movementType" = 'shifting' -- Shifting IN to warehouse
 
         UNION ALL
@@ -1006,7 +1018,6 @@ router.get('/opening-balance', auth, async (req, res) => {
         LEFT JOIN warehouses fw ON a."fromWarehouseId" = fw.id
         WHERE a.date < $1
           AND a.status = 'approved'
-          AND a."adminApprovedBy" IS NOT NULL
           AND a."movementType" IN ('shifting', 'production-shifting') -- Shifting OUT or Production-Shifting OUT from warehouse
       ) activity
       GROUP BY UPPER(TRIM(activity.variety)), activity.location
@@ -1017,7 +1028,7 @@ router.get('/opening-balance', auth, async (req, res) => {
     // Consolidated approach: Union all movements (IN as +, OUT as -) then GROUP BY
     const productionStockQuery = `
       SELECT
-        TRIM(activity.variety) as variety,
+        UPPER(TRIM(activity.variety)) as variety,
         activity.outturn,
         SUM(activity.bags_change) as bags
       FROM (
@@ -1030,7 +1041,6 @@ router.get('/opening-balance', auth, async (req, res) => {
         LEFT JOIN outturns o ON a."outturnId" = o.id
         WHERE a.date < $1
           AND a.status = 'approved'
-          AND a."adminApprovedBy" IS NOT NULL
           AND (
             (a."movementType" = 'purchase' AND a."outturnId" IS NOT NULL)
             OR a."movementType" = 'production-shifting'

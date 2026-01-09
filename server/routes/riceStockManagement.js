@@ -35,18 +35,34 @@ router.get('/movements', auth, async (req, res) => {
         // Build where clause
         const where = {};
 
-        // Date range filters take priority over Month/Year filter
-        if (dateFrom || dateTo) {
-            where.date = {};
-            if (dateFrom) where.date[Op.gte] = dateFrom;
-            if (dateTo) where.date[Op.lte] = dateTo;
-        } else if (year && month) {
+        // OPTIMIZED: Combined date filtering logic
+        const dateConditions = [];
+
+        // 1. Month-wise filtering
+        if (year && month) {
             const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
             const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
-            where.date = {
+            dateConditions.push({
                 [Op.gte]: startDate,
                 [Op.lte]: endDate
-            };
+            });
+        }
+
+        // 2. Date Range filtering
+        if (dateFrom || dateTo) {
+            const rangeCondition = {};
+            if (dateFrom) rangeCondition[Op.gte] = dateFrom;
+            if (dateTo) rangeCondition[Op.lte] = dateTo;
+            dateConditions.push(rangeCondition);
+        }
+
+        // Combine date conditions
+        if (dateConditions.length > 0) {
+            if (dateConditions.length === 1) {
+                where.date = dateConditions[0];
+            } else {
+                where.date = { [Op.and]: dateConditions };
+            }
         }
 
         // Movement type filtering
@@ -103,10 +119,22 @@ router.get('/movements', auth, async (req, res) => {
             WHERE ${Object.keys(where).length > 0 ?
                 Object.keys(where).map(key => {
                     if (key === 'date' && typeof where[key] === 'object') {
+                        const dateObj = where[key];
                         const conditions = [];
-                        if (where[key][Op.gte]) conditions.push(`rsm.date >= '${where[key][Op.gte]}'`);
-                        if (where[key][Op.lte]) conditions.push(`rsm.date <= '${where[key][Op.lte]}'`);
-                        return conditions.join(' AND ');
+
+                        // Handle simple object (Op.gte, Op.lte)
+                        if (dateObj[Op.gte]) conditions.push(`rsm.date >= '${dateObj[Op.gte]}'`);
+                        if (dateObj[Op.lte]) conditions.push(`rsm.date <= '${dateObj[Op.lte]}'`);
+
+                        // Handle Op.and (array of objects)
+                        if (dateObj[Op.and]) {
+                            dateObj[Op.and].forEach(cond => {
+                                if (cond[Op.gte]) conditions.push(`rsm.date >= '${cond[Op.gte]}'`);
+                                if (cond[Op.lte]) conditions.push(`rsm.date <= '${cond[Op.lte]}'`);
+                            });
+                        }
+
+                        return conditions.length > 0 ? conditions.join(' AND ') : '1=1';
                     }
                     return `rsm.${key} = '${where[key]}'`;
                 }).join(' AND ') : '1=1'
@@ -128,10 +156,20 @@ router.get('/movements', auth, async (req, res) => {
                 WHERE ${Object.keys(where).length > 0 ?
                     Object.keys(where).map(key => {
                         if (key === 'date' && typeof where[key] === 'object') {
+                            const dateObj = where[key];
                             const conditions = [];
-                            if (where[key][Op.gte]) conditions.push(`rsm.date >= '${where[key][Op.gte]}'`);
-                            if (where[key][Op.lte]) conditions.push(`rsm.date <= '${where[key][Op.lte]}'`);
-                            return conditions.join(' AND ');
+
+                            if (dateObj[Op.gte]) conditions.push(`rsm.date >= '${dateObj[Op.gte]}'`);
+                            if (dateObj[Op.lte]) conditions.push(`rsm.date <= '${dateObj[Op.lte]}'`);
+
+                            if (dateObj[Op.and]) {
+                                dateObj[Op.and].forEach(cond => {
+                                    if (cond[Op.gte]) conditions.push(`rsm.date >= '${cond[Op.gte]}'`);
+                                    if (cond[Op.lte]) conditions.push(`rsm.date <= '${cond[Op.lte]}'`);
+                                });
+                            }
+
+                            return conditions.length > 0 ? conditions.join(' AND ') : '1=1';
                         }
                         return `rsm.${key} = '${where[key]}'`;
                     }).join(' AND ') : '1=1'

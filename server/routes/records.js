@@ -48,35 +48,46 @@ router.get('/arrivals', auth, async (req, res) => {
       ];
     }
 
-    // FIXED: Improved date filtering logic with proper month boundary handling
-    if (dateFrom || dateTo) {
-      // Date Range filtering takes priority over Month-wise filtering
-      where.date = {};
-      if (dateFrom) where.date[Op.gte] = dateFrom;
-      if (dateTo) where.date[Op.lte] = dateTo;
-      console.log(`📅 RECORDS API: Date range filter applied - From: ${dateFrom}, To: ${dateTo}`);
-    } else if (month) {
-      // FIXED: Proper month boundary calculation
+    // OPTIMIZED: Combined date filtering logic
+    const dateConditions = [];
+
+    // 1. Month-wise filtering
+    if (month) {
       const [year, monthNum] = month.split('-');
       const startDate = `${year}-${monthNum.padStart(2, '0')}-01`;
-      // FIXED: Calculate last day of month properly
       const lastDay = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
       const endDate = `${year}-${monthNum.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
-      where.date = {
+      dateConditions.push({
         [Op.gte]: startDate,
         [Op.lte]: endDate
-      };
-      console.log(`📅 Arrivals month filter applied: ${startDate} to ${endDate}`);
+      });
+      console.log(`📅 Arrivals month filter: ${startDate} to ${endDate}`);
+    }
+
+    // 2. Date Range filtering
+    if (dateFrom || dateTo) {
+      const rangeCondition = {};
+      if (dateFrom) rangeCondition[Op.gte] = dateFrom;
+      if (dateTo) rangeCondition[Op.lte] = dateTo;
+      dateConditions.push(rangeCondition);
+      console.log(`📅 Arrivals range filter: ${dateFrom} to ${dateTo}`);
+    }
+
+    // Combine conditions if multiple exist
+    if (dateConditions.length > 0) {
+      if (dateConditions.length === 1) {
+        where.date = dateConditions[0];
+      } else {
+        where.date = { [Op.and]: dateConditions };
+      }
     } else if (!outturnId && showAll !== 'true') {
-      // CLOUD FIX: If no date filter provided AND no outturnId AND NOT showAll, default to last 30 days
-      // When showAll=true (stock tab), we want ALL records for accurate stock calculation
-      // When outturnId is specified, we want ALL records for that outturn regardless of date
+      // DEFAULT: Default to last 30 days if NO filters provided (limit performance impact)
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       where.date = {
         [Op.gte]: thirtyDaysAgo.toISOString().split('T')[0]
       };
-      console.log(`📅 Default 30-day filter applied (no showAll flag)`);
+      console.log(`📅 Default 30-day filter applied`);
     } else if (showAll === 'true') {
       console.log(`📅 showAll=true: Fetching ALL approved records (no date limit)`);
     }
@@ -437,8 +448,9 @@ router.get('/stock', auth, async (req, res) => {
     }
 
     const where = {
-      status: 'approved',
-      adminApprovedBy: { [Op.not]: null } // Only admin-approved records
+      status: 'approved'
+      // Removing strict adminApprovedBy requirement for stock view consistency
+      // as users need to see cumulative stock from all approved records.
       // NOTE: Loose entries are now INCLUDED to show as deductions in Paddy Stock
       // They will be displayed with Kunchinittu name and deducted from stock
     };
