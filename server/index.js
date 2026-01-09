@@ -708,6 +708,16 @@ const startServer = async () => {
         console.log('⚠️ Migration 50 warning:', error.message);
       }
 
+      // Migration 51: Add outturn clearing fields (is_cleared, cleared_at, cleared_by, remaining_bags)
+      // CRITICAL: Fixes 'column o.isCleared does not exist' error in production
+      try {
+        const addOutturnClearingFields = require('./migrations/add_outturn_clearing_fields');
+        await addOutturnClearingFields.up();
+        console.log('✅ Migration 51: Outturn clearing fields added (is_cleared, cleared_at, cleared_by, remaining_bags)');
+      } catch (error) {
+        console.log('⚠️ Migration 51 warning:', error.message);
+      }
+
       console.log('✅ Migrations completed.');
     } catch (error) {
       console.log('⚠️ Migrations warning:', error.message);
