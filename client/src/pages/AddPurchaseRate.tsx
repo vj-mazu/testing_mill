@@ -289,6 +289,7 @@ interface PurchaseRate {
   sute: string;
   suteCalculationMethod: 'per_bag' | 'per_quintal';
   h: string;
+  hCalculationMethod: 'per_bag' | 'per_quintal';
   b: string;
   bCalculationMethod: 'per_bag' | 'per_quintal';
   lf: string;
@@ -313,6 +314,7 @@ const AddPurchaseRate: React.FC = () => {
     sute: '0',
     suteCalculationMethod: 'per_bag',
     h: '0',
+    hCalculationMethod: 'per_bag',
     b: '0',
     bCalculationMethod: 'per_bag',
     lf: '0',
@@ -351,6 +353,7 @@ const AddPurchaseRate: React.FC = () => {
             sute: rate.sute?.toString() || '0',
             suteCalculationMethod: rate.suteCalculationMethod || 'per_bag',
             h: rate.h.toString(),
+            hCalculationMethod: rate.hCalculationMethod || 'per_bag',
             b: rate.b.toString(),
             bCalculationMethod: rate.bCalculationMethod,
             lf: rate.lf.toString(),
@@ -367,6 +370,7 @@ const AddPurchaseRate: React.FC = () => {
             sute: '0',
             suteCalculationMethod: 'per_bag',
             h: '0',
+            hCalculationMethod: 'per_bag',
             b: '0',
             bCalculationMethod: 'per_bag',
             lf: '0',
@@ -391,7 +395,7 @@ const AddPurchaseRate: React.FC = () => {
   const weightInQuintals = arrival ? parseFloat(arrival.netWeight.toString()) / 100 : 0;
   const bags = arrival ? arrival.bags : 0;
   const actualNetWeight = arrival ? parseFloat(arrival.netWeight.toString()) : 0;
-  
+
   // Calculate sute net weight first (needed for base rate calculation)
   let suteNetWeight = actualNetWeight;
   let suteAmount = 0;
@@ -409,7 +413,7 @@ const AddPurchaseRate: React.FC = () => {
       suteNetWeight = actualNetWeight;
     }
   }
-  
+
   // Base Rate Calculation based on calculation method
   let baseRateAmount = 0;
   if (formData.baseRateCalculationMethod === 'per_bag') {
@@ -419,15 +423,21 @@ const AddPurchaseRate: React.FC = () => {
     // Per Quintal: (actual net weight ÷ 100) × base rate (NOT sute net weight)
     baseRateAmount = (actualNetWeight / 100) * parseFloat(formData.baseRate || '0');
   }
-  
-  // Calculate hamali amount (can be negative for MDL)
+
+  // Calculate hamali amount with column-type specific rules
+  // For MDL and MDWB: if H is negative, treat as positive (add instead of subtract)
   const hamaliValue = parseFloat(formData.h || '0');
-  let hamaliAmount = bags * hamaliValue;
-  // For MDL: if hamali is negative, subtract from total
-  if (formData.rateType === 'MDL' && hamaliValue < 0) {
-    hamaliAmount = bags * Math.abs(hamaliValue) * -1; // Keep it negative for subtraction
+  let effectiveHamaliValue = hamaliValue;
+  if (['MDL', 'MDWB'].includes(formData.rateType) && hamaliValue < 0) {
+    effectiveHamaliValue = Math.abs(hamaliValue); // Negative treated as positive
   }
-  
+  let hamaliAmount = 0;
+  if (formData.hCalculationMethod === 'per_bag') {
+    hamaliAmount = bags * effectiveHamaliValue;
+  } else {
+    hamaliAmount = (actualNetWeight / 100) * effectiveHamaliValue;
+  }
+
   // Calculate B amount
   let bAmount = 0;
   if (arrival && formData.b) {
@@ -438,53 +448,55 @@ const AddPurchaseRate: React.FC = () => {
       bAmount = bValue * weightInQuintals;
     }
   }
-  
-  // Calculate LF amount
+
+  // Calculate LF amount with column-type specific rules
+  // MDL and MDWB: LF = 0 (no LF allowed)
   let lfAmount = 0;
-  if (arrival && formData.lf) {
-    const lfValue = parseFloat(formData.lf);
+  const effectiveLfValue = ['MDL', 'MDWB'].includes(formData.rateType) ? 0 : parseFloat(formData.lf || '0');
+  if (arrival && effectiveLfValue > 0) {
     if (formData.lfCalculationMethod === 'per_bag') {
-      lfAmount = lfValue * bags;
+      lfAmount = effectiveLfValue * bags;
     } else {
-      lfAmount = lfValue * weightInQuintals;
+      lfAmount = effectiveLfValue * weightInQuintals;
     }
   }
-  
+
   // EGB calculation based on rate type
   const showEGB = formData.rateType === 'CDL' || formData.rateType === 'MDL';
   const egbAmount = showEGB ? bags * parseFloat(formData.egb || '0') : 0;
-  
+
   const totalAmount = baseRateAmount + hamaliAmount + bAmount + lfAmount + egbAmount;
   // Calculate average rate per 75 kg
   const averageRate = actualNetWeight > 0 ? (totalAmount / actualNetWeight) * 75 : 0;
-  
+
   // Build amount formula with base rate on top, sute on second line, other calculations follow
   const baseRateLine = `${formData.baseRate || '0'}${formData.rateType.toLowerCase()}`;
   const adjustmentParts = [];
-  
+
   // NEW: Add sute FIRST on second line
   if (parseFloat(formData.sute || '0') !== 0) {
     const suteLabel = formData.suteCalculationMethod === 'per_bag' ? 's/bag' : 's/Q';
     const suteValue = parseFloat(formData.sute || '0');
     adjustmentParts.push(`${suteValue > 0 ? '+' : ''}${formData.sute || '0'}${suteLabel}`);
   }
-  
-  // Show correct sign for hamali (+ for positive, - for negative)
-  if (hamaliValue !== 0) {
-    adjustmentParts.push(`${hamaliValue > 0 ? '+' : ''}${formData.h || '0'}h`);
+
+  // Show hamali (use effective value for MDL/MDWB)
+  if (effectiveHamaliValue !== 0) {
+    adjustmentParts.push(`+${effectiveHamaliValue}h`);
   }
   if (parseFloat(formData.b || '0') !== 0) {
     adjustmentParts.push(`+${formData.b || '0'}b`);
   }
-  if (parseFloat(formData.lf || '0') !== 0) {
-    adjustmentParts.push(`+${formData.lf || '0'}lf`);
+  // LF only shown for CDL/CDWB (0 for MDL/MDWB)
+  if (effectiveLfValue !== 0) {
+    adjustmentParts.push(`+${effectiveLfValue}lf`);
   }
   if (showEGB && parseFloat(formData.egb || '0') !== 0) {
     adjustmentParts.push(`+${formData.egb || '0'}egb`);
   }
-  
-  const amountFormula = adjustmentParts.length > 0 
-    ? `${baseRateLine}\n${adjustmentParts.join('')}` 
+
+  const amountFormula = adjustmentParts.length > 0
+    ? `${baseRateLine}\n${adjustmentParts.join('')}`
     : baseRateLine;
 
   // Validate form
@@ -503,11 +515,23 @@ const AddPurchaseRate: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  // Handle input change
+  // Handle input change with column-type rules
   const handleInputChange = (field: keyof PurchaseRate, value: string) => {
-    // If rate type is changing to CDWB or MDWB, reset EGB to 0
-    if (field === 'rateType' && (value === 'CDWB' || value === 'MDWB')) {
-      setFormData(prev => ({ ...prev, [field]: value, egb: '0' }));
+    if (field === 'rateType') {
+      // Apply column-type specific rules when rate type changes
+      const rateTypeValue = value as 'CDL' | 'CDWB' | 'MDL' | 'MDWB';
+      const updates: Partial<PurchaseRate> = { rateType: rateTypeValue };
+
+      // CDWB and MDWB: force EGB = 0
+      if (rateTypeValue === 'CDWB' || rateTypeValue === 'MDWB') {
+        updates.egb = '0';
+      }
+      // MDL and MDWB: force LF = 0
+      if (rateTypeValue === 'MDL' || rateTypeValue === 'MDWB') {
+        updates.lf = '0';
+      }
+
+      setFormData(prev => ({ ...prev, ...updates }));
     } else {
       setFormData(prev => ({ ...prev, [field]: value }));
     }
@@ -534,6 +558,7 @@ const AddPurchaseRate: React.FC = () => {
         rateType: formData.rateType,
         baseRateCalculationMethod: formData.baseRateCalculationMethod,
         h: parseFloat(formData.h),
+        hCalculationMethod: formData.hCalculationMethod,
         b: parseFloat(formData.b),
         bCalculationMethod: formData.bCalculationMethod,
         lf: parseFloat(formData.lf),
@@ -639,7 +664,7 @@ const AddPurchaseRate: React.FC = () => {
       {/* Rate Calculation Form */}
       <Card>
         <SectionTitle>Rate Calculation Form</SectionTitle>
-        
+
         {/* Base Rate Section */}
         <BaseRateSection>
           <SectionSubtitle>Base Rate</SectionSubtitle>
@@ -732,15 +757,37 @@ const AddPurchaseRate: React.FC = () => {
 
             {/* H */}
             <FormGroup>
-              <Label>H (Hamali)</Label>
+              <Label>H (Hamali) {['MDL', 'MDWB'].includes(formData.rateType) && <span style={{ color: '#f59e0b', fontSize: '0.7rem' }}>(negative = positive)</span>}</Label>
               <Input
                 type="number"
                 step="0.01"
                 value={formData.h}
                 onChange={(e) => handleInputChange('h', e.target.value)}
                 placeholder="H (can be negative)"
-                title="Enter negative value (e.g., -100) to subtract"
+                title={['MDL', 'MDWB'].includes(formData.rateType) ? 'For MDL/MDWB, negative values are treated as positive' : 'Enter negative value (e.g., -100) to subtract'}
               />
+              <RadioGroup>
+                <RadioLabel>
+                  <input
+                    type="radio"
+                    name="hCalculationMethod"
+                    value="per_bag"
+                    checked={formData.hCalculationMethod === 'per_bag'}
+                    onChange={(e) => handleInputChange('hCalculationMethod', e.target.value as any)}
+                  />
+                  Bag
+                </RadioLabel>
+                <RadioLabel>
+                  <input
+                    type="radio"
+                    name="hCalculationMethod"
+                    value="per_quintal"
+                    checked={formData.hCalculationMethod === 'per_quintal'}
+                    onChange={(e) => handleInputChange('hCalculationMethod', e.target.value as any)}
+                  />
+                  Quintal
+                </RadioLabel>
+              </RadioGroup>
             </FormGroup>
 
             {/* B */}
@@ -777,38 +824,42 @@ const AddPurchaseRate: React.FC = () => {
               </RadioGroup>
             </FormGroup>
 
-            {/* LF */}
+            {/* LF - Disabled for MDL and MDWB */}
             <FormGroup>
-              <Label>LF</Label>
+              <Label>LF {['MDL', 'MDWB'].includes(formData.rateType) && <span style={{ color: '#dc2626', fontSize: '0.7rem' }}>(N/A for {formData.rateType})</span>}</Label>
               <Input
                 type="number"
                 step="0.01"
-                value={formData.lf}
+                value={['MDL', 'MDWB'].includes(formData.rateType) ? '0' : formData.lf}
                 onChange={(e) => handleInputChange('lf', e.target.value)}
                 placeholder="LF"
+                disabled={['MDL', 'MDWB'].includes(formData.rateType)}
+                style={['MDL', 'MDWB'].includes(formData.rateType) ? { background: '#fee2e2', cursor: 'not-allowed' } : {}}
               />
-              <RadioGroup>
-                <RadioLabel>
-                  <input
-                    type="radio"
-                    name="lfCalculationMethod"
-                    value="per_bag"
-                    checked={formData.lfCalculationMethod === 'per_bag'}
-                    onChange={(e) => handleInputChange('lfCalculationMethod', e.target.value as any)}
-                  />
-                  Bag
-                </RadioLabel>
-                <RadioLabel>
-                  <input
-                    type="radio"
-                    name="lfCalculationMethod"
-                    value="per_quintal"
-                    checked={formData.lfCalculationMethod === 'per_quintal'}
-                    onChange={(e) => handleInputChange('lfCalculationMethod', e.target.value as any)}
-                  />
-                  Quintal
-                </RadioLabel>
-              </RadioGroup>
+              {!['MDL', 'MDWB'].includes(formData.rateType) && (
+                <RadioGroup>
+                  <RadioLabel>
+                    <input
+                      type="radio"
+                      name="lfCalculationMethod"
+                      value="per_bag"
+                      checked={formData.lfCalculationMethod === 'per_bag'}
+                      onChange={(e) => handleInputChange('lfCalculationMethod', e.target.value as any)}
+                    />
+                    Bag
+                  </RadioLabel>
+                  <RadioLabel>
+                    <input
+                      type="radio"
+                      name="lfCalculationMethod"
+                      value="per_quintal"
+                      checked={formData.lfCalculationMethod === 'per_quintal'}
+                      onChange={(e) => handleInputChange('lfCalculationMethod', e.target.value as any)}
+                    />
+                    Quintal
+                  </RadioLabel>
+                </RadioGroup>
+              )}
             </FormGroup>
 
             {/* EGB - Show for CDL and MDL */}
@@ -831,15 +882,73 @@ const AddPurchaseRate: React.FC = () => {
         <CalculationBox>
           <CalculationRow>
             <CalculationLabel>Net Weight</CalculationLabel>
-            <CalculationValue>{weightInQuintals.toFixed(2)} Q</CalculationValue>
+            <CalculationValue>{weightInQuintals.toFixed(2)} Q ({actualNetWeight.toFixed(0)} kg)</CalculationValue>
           </CalculationRow>
+
+          {/* Detailed Breakdown */}
+          <div style={{
+            background: '#f8fafc',
+            padding: '0.75rem',
+            borderRadius: '6px',
+            margin: '0.5rem 0',
+            fontSize: '0.85rem',
+            border: '1px solid #e2e8f0'
+          }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '0.5rem', color: '#1e40af' }}>📊 Calculation Breakdown:</div>
+
+            {parseFloat(formData.sute || '0') > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                <span>Sute ({formData.sute} × {formData.suteCalculationMethod === 'per_bag' ? `${bags} bags` : `${weightInQuintals.toFixed(2)}Q`})</span>
+                <span style={{ color: '#dc2626' }}>-{suteAmount.toFixed(2)} kg</span>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+              <span>Sute Net Weight</span>
+              <span style={{ fontWeight: 'bold' }}>{suteNetWeight.toFixed(2)} kg</span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', borderTop: '1px solid #e2e8f0', marginTop: '4px', paddingTop: '4px' }}>
+              <span>Base Rate ({formData.baseRate} × {formData.baseRateCalculationMethod === 'per_bag' ? `${suteNetWeight.toFixed(2)}/75` : `${weightInQuintals.toFixed(2)}Q`})</span>
+              <span style={{ color: '#059669', fontWeight: 'bold' }}>₹{baseRateAmount.toFixed(2)}</span>
+            </div>
+
+            {effectiveHamaliValue !== 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                <span>H ({effectiveHamaliValue} × {formData.hCalculationMethod === 'per_bag' ? `${bags} bags` : `${weightInQuintals.toFixed(2)}Q`})</span>
+                <span style={{ color: '#059669' }}>+₹{hamaliAmount.toFixed(2)}</span>
+              </div>
+            )}
+
+            {bAmount > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                <span>B ({formData.b} × {formData.bCalculationMethod === 'per_bag' ? `${bags} bags` : `${weightInQuintals.toFixed(2)}Q`})</span>
+                <span style={{ color: '#059669' }}>+₹{bAmount.toFixed(2)}</span>
+              </div>
+            )}
+
+            {lfAmount > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                <span>LF ({formData.lf} × {formData.lfCalculationMethod === 'per_bag' ? `${bags} bags` : `${weightInQuintals.toFixed(2)}Q`})</span>
+                <span style={{ color: '#059669' }}>+₹{lfAmount.toFixed(2)}</span>
+              </div>
+            )}
+
+            {egbAmount > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                <span>EGB ({formData.egb} × {bags} bags)</span>
+                <span style={{ color: '#059669' }}>+₹{egbAmount.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+
           <CalculationRow>
             <CalculationLabel>Formula</CalculationLabel>
             <CalculationValue>{amountFormula}</CalculationValue>
           </CalculationRow>
-          <CalculationRow>
-            <CalculationLabel>Total Amount</CalculationLabel>
-            <CalculationValue>₹{totalAmount.toFixed(2)}</CalculationValue>
+          <CalculationRow style={{ background: '#dcfce7', padding: '8px', borderRadius: '4px' }}>
+            <CalculationLabel style={{ fontWeight: 'bold', color: '#166534' }}>Total Amount</CalculationLabel>
+            <CalculationValue style={{ fontWeight: 'bold', color: '#166534', fontSize: '1.1rem' }}>₹{totalAmount.toFixed(2)}</CalculationValue>
           </CalculationRow>
           <CalculationRow>
             <CalculationLabel>Avg Rate/Q</CalculationLabel>

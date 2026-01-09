@@ -121,12 +121,21 @@ router.delete('/warehouses/:id', auth, authorize('manager', 'admin'), async (req
 
 // ===== KUNCHINITTUS =====
 
-// Get all kunchinittus
+// Get all kunchinittus (for dropdowns - excludes closed by default)
 router.get('/kunchinittus', auth, async (req, res) => {
   try {
+    const { includeClosed } = req.query;
+
+    // By default, exclude closed kunchinittus from dropdown selections
+    // Use ?includeClosed=true to get all (for admin views)
+    const where = { isActive: true };
+    if (includeClosed !== 'true') {
+      where.isClosed = false;
+    }
+
     const kunchinittus = await Kunchinittu.findAll({
-      where: { isActive: true },
-      attributes: ['id', 'name', 'code', 'warehouseId', 'varietyId'], // Only essential fields
+      where,
+      attributes: ['id', 'name', 'code', 'warehouseId', 'varietyId', 'isClosed'], // Include isClosed status
       order: [['name', 'ASC']],
       include: [
         { model: Warehouse, as: 'warehouse', attributes: ['id', 'name', 'code'], required: false },

@@ -291,6 +291,8 @@ interface Kunchinittu {
   id: number;
   name: string;
   code: string;
+  isClosed?: boolean;
+  closedAt?: string;
   warehouse: {
     name: string;
     code: string;
@@ -383,6 +385,8 @@ const KunchinintuLedger: React.FC = () => {
     bags: ''
   });
   const [savingLoose, setSavingLoose] = useState(false);
+  const [closingKunchinittu, setClosingKunchinittu] = useState<number | null>(null);
+  const [showCloseConfirm, setShowCloseConfirm] = useState<{ id: number; code: string } | null>(null);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -730,6 +734,35 @@ const KunchinintuLedger: React.FC = () => {
     }
   };
 
+  // Show inline close confirmation
+  const showCloseConfirmation = (kunchinittuId: number, kunchinittuCode: string) => {
+    setShowCloseConfirm({ id: kunchinittuId, code: kunchinittuCode });
+  };
+
+  // Cancel confirmation
+  const cancelCloseConfirmation = () => {
+    setShowCloseConfirm(null);
+  };
+
+  // Confirm close Kunchinittu (PERMANENT - cannot be reopened)
+  const confirmCloseKunchinittu = async () => {
+    if (!showCloseConfirm) return;
+
+    try {
+      setClosingKunchinittu(showCloseConfirm.id);
+      await axios.post(`/ledger/kunchinittu/${showCloseConfirm.id}/close`);
+      toast.success(`Kunchinittu ${showCloseConfirm.code} has been closed PERMANENTLY`);
+      setShowCloseConfirm(null);
+      fetchKunchinittusAndWarehouses();
+      fetchLedger();
+    } catch (error: any) {
+      console.error('Error:', error);
+      toast.error(error.response?.data?.error || 'Failed to close kunchinittu');
+    } finally {
+      setClosingKunchinittu(null);
+    }
+  };
+
   // Helper function to get warehouse name from transaction
   const getWarehouseName = (record: Transaction, isInward: boolean): string => {
     if (isInward) {
@@ -904,7 +937,23 @@ const KunchinintuLedger: React.FC = () => {
                     <tbody>
                       <tr>
                         <td style={{ padding: '4px 8px', fontWeight: 'bold', width: '200px' }}>Kanchi Nittu Code:</td>
-                        <td style={{ padding: '4px 8px' }}>{ledgerData.kunchinittu.code}</td>
+                        <td style={{ padding: '4px 8px' }}>
+                          {ledgerData.kunchinittu.code}
+                          {(ledgerData.kunchinittu as any).isClosed && (
+                            <span style={{
+                              background: '#fef2f2',
+                              color: '#dc2626',
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '0.75rem',
+                              fontWeight: 'bold',
+                              marginLeft: '0.5rem',
+                              border: '1px solid #dc2626'
+                            }}>
+                              🔒 CLOSED
+                            </span>
+                          )}
+                        </td>
                         <td style={{ padding: '4px 8px' }} colSpan={8}></td>
                       </tr>
                       <tr>
@@ -928,19 +977,91 @@ const KunchinintuLedger: React.FC = () => {
                     </tbody>
                   </table>
                   {(user?.role === 'manager' || user?.role === 'admin') && (
-                    <Button
-                      className="success"
-                      onClick={() => handleAddLoose(
-                        ledgerData.kunchinittu.id,
-                        ledgerData.kunchinittu.code,
-                        ledgerData.kunchinittu.warehouse.name
+                    <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
+                      {/* Only show Add Loose when NOT closed */}
+                      {!(ledgerData.kunchinittu as any).isClosed && (
+                        <Button
+                          className="success"
+                          onClick={() => handleAddLoose(
+                            ledgerData.kunchinittu.id,
+                            ledgerData.kunchinittu.code,
+                            ledgerData.kunchinittu.warehouse.name
+                          )}
+                          style={{ whiteSpace: 'nowrap' }}
+                        >
+                          {showLooseModal && selectedKunchinintuForLoose?.id === ledgerData.kunchinittu.id ? 'Close' : '+ Add Loose'}
+                        </Button>
                       )}
-                      style={{ marginLeft: '1rem', whiteSpace: 'nowrap' }}
-                    >
-                      {showLooseModal && selectedKunchinintuForLoose?.id === ledgerData.kunchinittu.id ? 'Close' : '+ Add Loose'}
-                    </Button>
+                      {/* Close/Reopen Kunchinittu Button */}
+                      {(ledgerData.kunchinittu as any).isClosed ? (
+                        // Show CLOSED status - no reopen option
+                        null
+                      ) : (
+                        // Close button - Admin only (PERMANENT)
+                        user?.role === 'admin' && (
+                          <Button
+                            className="primary"
+                            onClick={() => showCloseConfirmation(
+                              ledgerData.kunchinittu.id,
+                              ledgerData.kunchinittu.code
+                            )}
+                            disabled={closingKunchinittu === ledgerData.kunchinittu.id || showCloseConfirm?.id === ledgerData.kunchinittu.id}
+                            style={{ background: '#ef4444', whiteSpace: 'nowrap' }}
+                          >
+                            {closingKunchinittu === ledgerData.kunchinittu.id ? 'Closing...' : '🔒 Close'}
+                          </Button>
+                        )
+                      )}
+                    </div>
                   )}
                 </div>
+
+                {/* Inline Close Confirmation Box (PERMANENT - No Reopen) */}
+                {showCloseConfirm?.id === ledgerData.kunchinittu.id && (
+                  <div style={{
+                    background: '#fef2f2',
+                    border: '2px solid #dc2626',
+                    borderRadius: '8px',
+                    padding: '1rem',
+                    marginBottom: '1rem',
+                    marginTop: '0.5rem'
+                  }}>
+                    <h3 style={{
+                      margin: '0 0 0.75rem 0',
+                      color: '#dc2626',
+                      fontSize: '1rem'
+                    }}>
+                      ⚠️ PERMANENTLY Close Kunchinittu?
+                    </h3>
+                    <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: '#374151' }}>
+                      Are you sure you want to <strong>permanently close</strong> <strong>{showCloseConfirm.code}</strong>?
+                    </p>
+                    <ul style={{ margin: '0 0 1rem 0', paddingLeft: '1.25rem', fontSize: '0.85rem', color: '#6b7280' }}>
+                      <li><strong style={{ color: '#dc2626' }}>This action CANNOT be undone</strong></li>
+                      <li>It will NOT appear in dropdown selections for new entries</li>
+                      <li>No new arrivals or loose can be added</li>
+                      <li>You can still view the ledger history</li>
+                    </ul>
+                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                      <Button
+                        className="secondary"
+                        onClick={cancelCloseConfirmation}
+                        disabled={closingKunchinittu === ledgerData.kunchinittu.id}
+                        style={{ background: '#e5e7eb', color: '#374151' }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        className="primary"
+                        onClick={confirmCloseKunchinittu}
+                        disabled={closingKunchinittu === ledgerData.kunchinittu.id}
+                        style={{ background: '#dc2626', whiteSpace: 'nowrap' }}
+                      >
+                        {closingKunchinittu === ledgerData.kunchinittu.id ? 'Closing...' : 'Yes, Close Permanently'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Inline Loose Form */}
                 {showLooseModal && selectedKunchinintuForLoose?.id === ledgerData.kunchinittu.id && (
@@ -1034,7 +1155,8 @@ const KunchinintuLedger: React.FC = () => {
                       </Button>
                     </div>
                   </div>
-                )}
+                )
+                }
 
                 {/* Simple Summary Table */}
                 <div style={{
@@ -1396,25 +1518,28 @@ const KunchinintuLedger: React.FC = () => {
         <EmptyState>
           <p>🏭 Select a Warehouse to view all kunchinittus ledger</p>
         </EmptyState>
-      )}
+      )
+      }
 
       {/* Pagination Controls for Kunchinittu Ledger */}
-      {multipleLedgerData.length > 0 && totalPages > 1 && (
-        <PaginationControls
-          currentPage={currentPage}
-          totalPages={totalPages}
-          totalRecords={totalRecords}
-          recordsPerPage={recordsPerPage}
-          onPageChange={(newPage) => {
-            setCurrentPage(newPage);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            // Refetch with new page - will be triggered by useEffect
-          }}
-          loading={loading}
-        />
-      )}
+      {
+        multipleLedgerData.length > 0 && totalPages > 1 && (
+          <PaginationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalRecords={totalRecords}
+            recordsPerPage={recordsPerPage}
+            onPageChange={(newPage) => {
+              setCurrentPage(newPage);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              // Refetch with new page - will be triggered by useEffect
+            }}
+            loading={loading}
+          />
+        )
+      }
 
-    </Container>
+    </Container >
   );
 };
 

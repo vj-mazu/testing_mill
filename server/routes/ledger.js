@@ -1,6 +1,6 @@
 const express = require('express');
 const { Op } = require('sequelize');
-const { auth } = require('../middleware/auth');
+const { auth, authorize } = require('../middleware/auth');
 const Arrival = require('../models/Arrival');
 const { Warehouse, Kunchinittu, Variety } = require('../models/Location');
 const User = require('../models/User');
@@ -147,7 +147,10 @@ router.get('/kunchinittu/:id', auth, async (req, res) => {
         warehouse: kunchinittu.warehouse,
         variety: kunchinittu.variety,
         averageRate: kunchinittu.averageRate,
-        lastRateCalculation: kunchinittu.lastRateCalculation
+        lastRateCalculation: kunchinittu.lastRateCalculation,
+        isClosed: kunchinittu.isClosed || false,
+        closedAt: kunchinittu.closedAt,
+        closedBy: kunchinittu.closedBy
       },
       transactions: {
         inward,
@@ -1297,7 +1300,7 @@ router.get('/paddy-stock/:id/pdf', auth, async (req, res) => {
   }
 });
 
-// Get all Kunchinittus for ledger selection
+// Get all Kunchinittus for ledger selection (includes closed ones for viewing history)
 router.get('/kunchinittus', auth, async (req, res) => {
   try {
     const kunchinittus = await Kunchinittu.findAll({
@@ -1305,7 +1308,7 @@ router.get('/kunchinittus', auth, async (req, res) => {
       include: [
         { model: Warehouse, as: 'warehouse', attributes: ['name', 'code'] }
       ],
-      order: [['name', 'ASC']]
+      order: [['isClosed', 'ASC'], ['name', 'ASC']] // Open ones first, then closed
     });
 
     res.json({ kunchinittus });
@@ -1313,6 +1316,91 @@ router.get('/kunchinittus', auth, async (req, res) => {
     console.error('Get kunchinittus for ledger error:', error);
     // Return empty array instead of error
     res.json({ kunchinittus: [] });
+  }
+});
+
+// Close a Kunchinittu (Admin only)
+// When closed: Cannot add new entries, won't appear in dropdowns for new arrivals
+// But can still view the ledger history
+router.post('/kunchinittu/:id/close', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const kunchinittu = await Kunchinittu.findByPk(id, {
+      include: [
+        { model: Warehouse, as: 'warehouse', attributes: ['name', 'code'] }
+      ]
+    });
+
+    if (!kunchinittu) {
+      return res.status(404).json({ error: 'Kunchinittu not found' });
+    }
+
+    if (kunchinittu.isClosed) {
+      return res.status(400).json({ error: 'Kunchinittu is already closed' });
+    }
+
+    // Close the Kunchinittu
+    await kunchinittu.update({
+      isClosed: true,
+      closedAt: new Date(),
+      closedBy: req.user.userId
+    });
+
+    console.log(`✅ Kunchinittu ${kunchinittu.code} closed by user ${req.user.userId}`);
+
+    res.json({
+      message: `Kunchinittu ${kunchinittu.code} has been closed successfully`,
+      kunchinittu: {
+        id: kunchinittu.id,
+        code: kunchinittu.code,
+        name: kunchinittu.name,
+        isClosed: true,
+        closedAt: kunchinittu.closedAt
+      }
+    });
+  } catch (error) {
+    console.error('Close kunchinittu error:', error);
+    res.status(500).json({ error: 'Failed to close kunchinittu' });
+  }
+});
+
+// Reopen a Kunchinittu (Admin only)
+router.post('/kunchinittu/:id/reopen', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const kunchinittu = await Kunchinittu.findByPk(id);
+
+    if (!kunchinittu) {
+      return res.status(404).json({ error: 'Kunchinittu not found' });
+    }
+
+    if (!kunchinittu.isClosed) {
+      return res.status(400).json({ error: 'Kunchinittu is not closed' });
+    }
+
+    // Reopen the Kunchinittu
+    await kunchinittu.update({
+      isClosed: false,
+      closedAt: null,
+      closedBy: null
+    });
+
+    console.log(`✅ Kunchinittu ${kunchinittu.code} reopened by admin ${req.user.userId}`);
+
+    res.json({
+      message: `Kunchinittu ${kunchinittu.code} has been reopened successfully`,
+      kunchinittu: {
+        id: kunchinittu.id,
+        code: kunchinittu.code,
+        name: kunchinittu.name,
+        isClosed: false
+      }
+    });
+  } catch (error) {
+    console.error('Reopen kunchinittu error:', error);
+    res.status(500).json({ error: 'Failed to reopen kunchinittu' });
   }
 });
 

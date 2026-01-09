@@ -77,6 +77,25 @@ const Kunchinittu = sequelize.define('Kunchinittu', {
     type: DataTypes.BOOLEAN,
     defaultValue: true
   },
+  isClosed: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    field: 'is_closed'
+  },
+  closedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'closed_at'
+  },
+  closedBy: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'users',
+      key: 'id'
+    },
+    field: 'closed_by'
+  },
   averageRate: {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: true,
@@ -95,7 +114,8 @@ const Kunchinittu = sequelize.define('Kunchinittu', {
     { fields: ['code'] },
     { fields: ['warehouseId'] },
     { fields: ['varietyId'] },
-    { fields: ['isActive'] }
+    { fields: ['isActive'] },
+    { fields: ['is_closed'] }
   ]
 });
 

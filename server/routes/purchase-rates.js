@@ -181,55 +181,79 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
     const lfNum = parseFloat(lf);
     const egbNum = parseFloat(egb);
 
-    // NEW CALCULATION LOGIC (Based on User Confirmation)
+    // NEW CALCULATION LOGIC (Based on User Confirmation - Updated with Column Type Rules)
+    // Column Type Rules:
+    // CDL: EGB=Normal, LF=Normal, H=Normal
+    // CDWB: EGB=0, LF=Normal, H=Normal
+    // MDL: EGB=Normal, LF=0, H=Minus treated as Plus
+    // MDWB: EGB=0, LF=0, H=Minus treated as Plus
+
     // 1. Calculate Sute Amount and Sute Net Weight
     let suteAmount;
     if (suteCalculationMethod === 'per_bag') {
       // Per bag: sute amount = sute value × bags
       suteAmount = suteNum * bags;
     } else {
-      // Per quintal: sute amount = (actual gross weight ÷ 100) × sute value
-      suteAmount = (actualGrossWeight / 100) * suteNum;
+      // Per quintal: sute amount = (actual net weight ÷ 100) × sute value
+      suteAmount = (actualNetWeight / 100) * suteNum;
     }
-    // Base Rate is calculated on SUTE NET WEIGHT (Actual Net Weight - Sute Amount)
+
+    // Sute Net Weight = Actual Net Weight - Sute Amount
     const suteNetWeight = actualNetWeight - suteAmount;
+
+    // 2. Base Rate Calculation
     let baseRateAmount;
     if (baseRateCalculationMethod === 'per_bag') {
       // Per Bag: (Sute Net Weight ÷ 75) × Base Rate
       baseRateAmount = (suteNetWeight / 75) * baseRateNum;
     } else {
-      // Per Quintal: (Actual Gross Weight ÷ 100) × Base Rate
-      baseRateAmount = (actualGrossWeight / 100) * baseRateNum;
+      // Per Quintal: (Actual Net Weight ÷ 100) × Base Rate (uses actual netweight)
+      baseRateAmount = (actualNetWeight / 100) * baseRateNum;
     }
 
-    // 3. H (Hamali) Calculation
+    // 3. H (Hamali) Calculation with column-type specific rules
+    // For MDL and MDWB: if H is negative, treat as positive (add instead of subtract)
+    let effectiveHNum = hNum;
+    if (['MDL', 'MDWB'].includes(rateType) && hNum < 0) {
+      // For MDL/MDWB, negative h should be treated as positive
+      effectiveHNum = Math.abs(hNum);
+    }
+
     let hAmount;
     if (hCalculationMethod === 'per_bag') {
-      hAmount = bags * hNum;
+      hAmount = bags * effectiveHNum;
     } else {
-      // Per quintal: (actual gross weight ÷ 100) × h
-      hAmount = (actualGrossWeight / 100) * hNum;
+      // Per quintal: (actual net weight ÷ 100) × h
+      hAmount = (actualNetWeight / 100) * effectiveHNum;
     }
 
-    // 4. B (Brokerage) Calculation
+    // 4. B Calculation
     let bAmount;
     if (bCalculationMethod === 'per_bag') {
       bAmount = bags * bNum;
     } else {
-      // per_quintal: (actual gross weight ÷ 100) × B
-      bAmount = (actualGrossWeight / 100) * bNum;
+      // Per quintal: (actual net weight ÷ 100) × b
+      bAmount = (actualNetWeight / 100) * bNum;
     }
 
-    // 5. LF Calculation
+    // 5. LF Calculation with column-type specific rules
+    // MDL and MDWB: LF = 0 (no LF allowed)
+    let effectiveLfNum = lfNum;
+    if (['MDL', 'MDWB'].includes(rateType)) {
+      effectiveLfNum = 0; // Force LF to 0 for MDL and MDWB
+    }
+
     let lfAmount;
     if (lfCalculationMethod === 'per_bag') {
-      lfAmount = bags * lfNum;
+      lfAmount = bags * effectiveLfNum;
     } else {
-      // per_quintal: (actual gross weight ÷ 100) × LF
-      lfAmount = (actualGrossWeight / 100) * lfNum;
+      // Per quintal: (actual net weight ÷ 100) × lf
+      lfAmount = (actualNetWeight / 100) * effectiveLfNum;
     }
 
-    // 6. EGB Calculation: Bags × EGB (Only for CDL/MDL)
+    // 6. EGB Calculation with column-type specific rules
+    // CDL and MDL: EGB = Normal (Bags × EGB)
+    // CDWB and MDWB: EGB = 0 (no EGB allowed)
     const showEGB = ['CDL', 'MDL'].includes(rateType);
     const egbAmount = showEGB ? bags * egbNum : 0;
 
@@ -249,17 +273,19 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
       adjustmentParts.push(`${suteNum > 0 ? '+' : ''}${suteNum}${suteLabel}`);
     }
 
-    // Show correct sign for hamali (+ for positive, - for negative)
-    if (hNum !== 0) {
-      adjustmentParts.push(`${hNum > 0 ? '+' : ''}${hNum}h`);
+    // Show correct sign for hamali (use effectiveHNum for MDL/MDWB)
+    if (effectiveHNum !== 0) {
+      adjustmentParts.push(`+${effectiveHNum}h`);
     }
     if (bNum !== 0) {
       adjustmentParts.push(`+${bNum}b`);
     }
-    if (lfNum !== 0) {
-      adjustmentParts.push(`+${lfNum}lf`);
+    // Use effectiveLfNum (0 for MDL/MDWB)
+    if (effectiveLfNum !== 0) {
+      adjustmentParts.push(`+${effectiveLfNum}lf`);
     }
-    if (egbNum !== 0) {
+    // EGB only shown for CDL/MDL (already using egbAmount which is 0 for CDWB/MDWB)
+    if (showEGB && egbNum !== 0) {
       adjustmentParts.push(`+${egbNum}egb`);
     }
 

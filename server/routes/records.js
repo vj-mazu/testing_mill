@@ -438,8 +438,9 @@ router.get('/stock', auth, async (req, res) => {
 
     const where = {
       status: 'approved',
-      adminApprovedBy: { [Op.not]: null }, // Only admin-approved records
-      movementType: { [Op.ne]: 'loose' } // Exclude loose (loss) entries from stock
+      adminApprovedBy: { [Op.not]: null } // Only admin-approved records
+      // NOTE: Loose entries are now INCLUDED to show as deductions in Paddy Stock
+      // They will be displayed with Kunchinittu name and deducted from stock
     };
 
     // FIXED: Improved date filtering logic with proper month boundary handling
@@ -526,15 +527,14 @@ router.get('/stock', auth, async (req, res) => {
       return acc;
     }, {});
 
-    // FIXED: Improved available months query with proper ordering
+    // FIXED: Improved available months query with proper ordering (including loose entries)
     const monthsQuery = await sequelize.query(`
       SELECT DISTINCT 
         TO_CHAR(date, 'YYYY-MM') as month,
         TO_CHAR(date, 'Month YYYY') as month_label
       FROM arrivals
       WHERE status = 'approved' 
-        AND "adminApprovedBy" IS NOT NULL 
-        AND "movementType" != 'loose'
+        AND "adminApprovedBy" IS NOT NULL
       ORDER BY month DESC
     `);
 

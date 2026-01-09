@@ -1581,10 +1581,15 @@ const Records: React.FC = () => {
     setRateFormData((prev: any) => {
       const newData = { ...prev, [field]: value };
 
-      // Reset EGB if rate type changes to non-EGB types
+      // Apply column-type specific rules when rate type changes
       if (field === 'rateType') {
-        if (['CDWB', 'MDWB', 'MDWN'].includes(value)) {
+        // CDWB and MDWB: EGB = 0
+        if (['CDWB', 'MDWB'].includes(value)) {
           newData.egb = '0';
+        }
+        // MDL and MDWB: LF = 0
+        if (['MDL', 'MDWB'].includes(value)) {
+          newData.lf = '0';
         }
       }
 
@@ -6007,6 +6012,12 @@ const Records: React.FC = () => {
                       safeUpdateStock(closingWarehouse, fromKey, -bagsToMove, { variety, location: fromLoc });
                       safeUpdateStock(closingProduction, prodKey, bagsToMove, { variety, outturn, kunchinittu: rec.fromKunchinittu?.code || '' });
                       console.log(`  🟡 [${d}] PROD-SHIFTING: ${bagsToMove} ${variety} from Warehouse(${fromLoc}) → Production(${outturn})`);
+                    } else if (rec.movementType === 'loose') {
+                      // LOOSE ENTRY - Add bags to warehouse (inward like purchase)
+                      const location = `${rec.toKunchinittu?.code || ''} - ${rec.toWarehouse?.name || ''}`;
+                      const key = `${variety}|${location}`;
+                      safeUpdateStock(closingWarehouse, key, rec.bags || 0, { variety, location });
+                      console.log(`  🟤 [${d}] LOOSE: +${rec.bags} ${variety} → Warehouse (${location})`);
                     } else {
                       console.log(`  ⚪ [${d}] UNKNOWN: ${rec.movementType} - ${rec.bags} ${variety}`);
                     }
@@ -6421,6 +6432,7 @@ const Records: React.FC = () => {
                                   const purchaseGroups: { [key: string]: { bags: number; broker: string; variety: string; date: string; to: string; outturn?: string; highlight: boolean } } = {};
                                   const shiftingGroups: { [key: string]: { bags: number; variety: string; date: string; from: string; to: string; highlight: boolean } } = {};
                                   const productionGroups: { [key: string]: { bags: number; variety: string; date: string; from: string; to: string; highlight: boolean } } = {};
+                                  const looseGroups: { [key: string]: { bags: number; variety: string; date: string; to: string; highlight: boolean } } = {};
 
                                   dateRecords.forEach((record: Arrival) => {
                                     if (record.movementType === 'purchase') {
@@ -6531,6 +6543,24 @@ const Records: React.FC = () => {
                                         };
                                       }
                                       shiftingGroups[key].bags += record.bags || 0;
+                                    } else if (record.movementType === 'loose') {
+                                      // Loose entries - treat as inward like purchase
+                                      const toKunchinittu = record.toKunchinittu?.code || '';
+                                      const toWarehouse = record.toWarehouse?.name || '';
+                                      const key = `loose-${record.variety}|${toKunchinittu}|${record.id}`;
+                                      const highlightKey = `${record.variety}|${toKunchinittu}`;
+                                      const shouldHighlight = openingStockKeys.has(highlightKey);
+
+                                      if (!looseGroups[key]) {
+                                        looseGroups[key] = {
+                                          bags: 0,
+                                          variety: record.variety || '-',
+                                          date: record.date || '',
+                                          to: `${toKunchinittu} - ${toWarehouse}`,
+                                          highlight: shouldHighlight
+                                        };
+                                      }
+                                      looseGroups[key].bags += record.bags || 0;
                                     }
                                   });
 
@@ -6640,6 +6670,87 @@ const Records: React.FC = () => {
                                               </tr>
                                             );
                                           })}
+                                        </tbody>
+                                      </table>
+
+                                      {/* Loose entries - YELLOW/AMBER (inward) */}
+                                      <table style={{
+                                        width: '100%',
+                                        borderCollapse: 'collapse',
+                                        fontFamily: 'Calibri, sans-serif',
+                                        fontSize: '11pt',
+                                        marginBottom: '5px',
+                                        border: 'none'
+                                      }}>
+                                        <tbody>
+                                          {Object.values(looseGroups).map((group: any, idx: number) => (
+                                            <tr key={`loose-${idx}`}>
+                                              <td style={{
+                                                backgroundColor: '#fef3c7',
+                                                padding: '4px 8px',
+                                                border: 'none',
+                                                fontFamily: 'Calibri, sans-serif',
+                                                fontSize: '11pt',
+                                                fontWeight: 'bold',
+                                                width: '10%',
+                                                textAlign: 'right',
+                                                color: '#92400e'
+                                              }}>
+                                                +{group.bags}
+                                              </td>
+                                              <td style={{
+                                                backgroundColor: 'transparent',
+                                                padding: '4px 8px',
+                                                border: 'none',
+                                                fontFamily: 'Calibri, sans-serif',
+                                                fontSize: '11pt',
+                                                fontWeight: 'bold',
+                                                width: '15%',
+                                                textAlign: 'left'
+                                              }}>
+                                                {group.variety}
+                                              </td>
+                                              <td style={{
+                                                backgroundColor: 'transparent',
+                                                padding: '4px 8px',
+                                                border: 'none',
+                                                fontFamily: 'Calibri, sans-serif',
+                                                fontSize: '11pt',
+                                                fontWeight: 'bold',
+                                                width: '18%',
+                                                textAlign: 'left',
+                                                color: '#92400e',
+                                                fontStyle: 'italic'
+                                              }}>
+                                                (Loose)
+                                              </td>
+                                              <td style={{
+                                                backgroundColor: 'transparent',
+                                                padding: '4px 2px',
+                                                border: 'none',
+                                                fontFamily: 'Calibri, sans-serif',
+                                                fontSize: '11pt',
+                                                fontWeight: 'bold',
+                                                width: '3%',
+                                                textAlign: 'center',
+                                                color: '#000'
+                                              }}>
+                                                to
+                                              </td>
+                                              <td style={{
+                                                backgroundColor: 'transparent',
+                                                padding: '4px 8px',
+                                                border: 'none',
+                                                fontFamily: 'Calibri, sans-serif',
+                                                fontSize: '11pt',
+                                                fontWeight: 'bold',
+                                                width: '54%',
+                                                textAlign: 'left'
+                                              }}>
+                                                {group.to}
+                                              </td>
+                                            </tr>
+                                          ))}
                                         </tbody>
                                       </table>
 
@@ -7681,13 +7792,14 @@ const Records: React.FC = () => {
                                     </RateFormGroup>
 
                                     <RateFormGroup>
-                                      <RateLabel>H</RateLabel>
+                                      <RateLabel>H {['MDL', 'MDWB'].includes(rateFormData.rateType) && <span style={{ color: '#f59e0b', fontSize: '0.65rem' }}>(−=+)</span>}</RateLabel>
                                       <RateInput
                                         type="number"
                                         step="0.01"
                                         value={rateFormData.h}
                                         onChange={(e) => handleRateInputChange('h', e.target.value)}
                                         placeholder="0"
+                                        title={['MDL', 'MDWB'].includes(rateFormData.rateType) ? 'For MDL/MDWB, negative values are treated as positive' : 'Enter value (negative to subtract)'}
                                       />
                                       <RateRadioGroup>
                                         <RateRadioLabel>
@@ -7746,37 +7858,42 @@ const Records: React.FC = () => {
                                       </RateRadioGroup>
                                     </RateFormGroup>
 
+                                    {/* LF - Disabled for MDL and MDWB */}
                                     <RateFormGroup>
-                                      <RateLabel>LF</RateLabel>
+                                      <RateLabel>LF {['MDL', 'MDWB'].includes(rateFormData.rateType) && <span style={{ color: '#dc2626', fontSize: '0.65rem' }}>(N/A)</span>}</RateLabel>
                                       <RateInput
                                         type="number"
                                         step="0.01"
-                                        value={rateFormData.lf}
+                                        value={['MDL', 'MDWB'].includes(rateFormData.rateType) ? '0' : rateFormData.lf}
                                         onChange={(e) => handleRateInputChange('lf', e.target.value)}
                                         placeholder="0"
+                                        disabled={['MDL', 'MDWB'].includes(rateFormData.rateType)}
+                                        style={['MDL', 'MDWB'].includes(rateFormData.rateType) ? { background: '#fee2e2', cursor: 'not-allowed' } : {}}
                                       />
-                                      <RateRadioGroup>
-                                        <RateRadioLabel>
-                                          <input
-                                            type="radio"
-                                            name="lfCalculationMethod"
-                                            value="per_bag"
-                                            checked={rateFormData.lfCalculationMethod === 'per_bag'}
-                                            onChange={(e) => handleRateInputChange('lfCalculationMethod', e.target.value)}
-                                          />
-                                          Bag
-                                        </RateRadioLabel>
-                                        <RateRadioLabel>
-                                          <input
-                                            type="radio"
-                                            name="lfCalculationMethod"
-                                            value="per_quintal"
-                                            checked={rateFormData.lfCalculationMethod === 'per_quintal'}
-                                            onChange={(e) => handleRateInputChange('lfCalculationMethod', e.target.value)}
-                                          />
-                                          Quintal
-                                        </RateRadioLabel>
-                                      </RateRadioGroup>
+                                      {!['MDL', 'MDWB'].includes(rateFormData.rateType) && (
+                                        <RateRadioGroup>
+                                          <RateRadioLabel>
+                                            <input
+                                              type="radio"
+                                              name="lfCalculationMethod"
+                                              value="per_bag"
+                                              checked={rateFormData.lfCalculationMethod === 'per_bag'}
+                                              onChange={(e) => handleRateInputChange('lfCalculationMethod', e.target.value)}
+                                            />
+                                            Bag
+                                          </RateRadioLabel>
+                                          <RateRadioLabel>
+                                            <input
+                                              type="radio"
+                                              name="lfCalculationMethod"
+                                              value="per_quintal"
+                                              checked={rateFormData.lfCalculationMethod === 'per_quintal'}
+                                              onChange={(e) => handleRateInputChange('lfCalculationMethod', e.target.value)}
+                                            />
+                                            Quintal
+                                          </RateRadioLabel>
+                                        </RateRadioGroup>
+                                      )}
                                     </RateFormGroup>
 
                                     {/* EGB - Show for CDL and MDL */}
@@ -7805,7 +7922,6 @@ const Records: React.FC = () => {
                                         ₹{(() => {
                                           const bags = record.bags || 0;
                                           const actualNetWeight = parseFloat(record.netWeight.toString());
-                                          const actualGrossWeight = parseFloat(record.grossWeight?.toString() || '0');
 
                                           // 1. Calculate Sute Amount and Sute Net Weight
                                           let suteAmount = 0;
@@ -7814,42 +7930,50 @@ const Records: React.FC = () => {
                                             if (rateFormData.suteCalculationMethod === 'per_bag') {
                                               suteAmount = suteValue * bags;
                                             } else {
-                                              suteAmount = (actualGrossWeight / 100) * suteValue;
+                                              suteAmount = (actualNetWeight / 100) * suteValue;
                                             }
                                           }
                                           // Sute is always a weight deduction from net weight
                                           const suteNetWeight = actualNetWeight - suteAmount;
 
-                                          // 2. Base Rate Calculation
+                                          // 2. Base Rate Calculation (per bag uses sute netweight, per quintal uses actual netweight)
                                           let baseRateAmount = 0;
                                           const baseRateValue = parseFloat(rateFormData.baseRate || '0');
                                           if (rateFormData.baseRateCalculationMethod === 'per_bag') {
                                             // Per Bag: (Sute Net Weight ÷ 75) × Base Rate
                                             baseRateAmount = (suteNetWeight / 75) * baseRateValue;
                                           } else {
-                                            // Per Quintal: (Actual Gross Weight ÷ 100) × Base Rate
-                                            baseRateAmount = (actualGrossWeight / 100) * baseRateValue;
+                                            // Per Quintal: (Actual Net Weight ÷ 100) × Base Rate
+                                            baseRateAmount = (actualNetWeight / 100) * baseRateValue;
                                           }
 
-                                          // 3. Hamali calculation
-                                          const hValue = parseFloat(rateFormData.h || '0');
+                                          // 3. Hamali calculation with column-type rules
+                                          // For MDL and MDWB: if H is negative, treat as positive
+                                          let hValue = parseFloat(rateFormData.h || '0');
+                                          if (['MDL', 'MDWB'].includes(rateFormData.rateType) && hValue < 0) {
+                                            hValue = Math.abs(hValue);
+                                          }
                                           const hAmount = rateFormData.hCalculationMethod === 'per_bag'
                                             ? hValue * bags
-                                            : hValue * (actualGrossWeight / 100);
+                                            : hValue * (actualNetWeight / 100);
 
-                                          // 4. B calculation
+                                          // 4. B calculation (uses netweight for quintal)
                                           const bValue = parseFloat(rateFormData.b || '0');
                                           const bAmount = rateFormData.bCalculationMethod === 'per_bag'
                                             ? bValue * bags
-                                            : bValue * (actualGrossWeight / 100);
+                                            : bValue * (actualNetWeight / 100);
 
-                                          // 5. LF calculation
-                                          const lfValue = parseFloat(rateFormData.lf || '0');
+                                          // 5. LF calculation with column-type rules
+                                          // MDL and MDWB: LF = 0
+                                          let lfValue = parseFloat(rateFormData.lf || '0');
+                                          if (['MDL', 'MDWB'].includes(rateFormData.rateType)) {
+                                            lfValue = 0;
+                                          }
                                           const lfAmount = rateFormData.lfCalculationMethod === 'per_bag'
                                             ? lfValue * bags
-                                            : lfValue * (actualGrossWeight / 100);
+                                            : lfValue * (actualNetWeight / 100);
 
-                                          // 6. EGB calculation
+                                          // 6. EGB calculation (only for CDL and MDL)
                                           const showEGB = ['CDL', 'MDL'].includes(rateFormData.rateType);
                                           const egbAmount = showEGB ? bags * parseFloat(rateFormData.egb || '0') : 0;
 

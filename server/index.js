@@ -697,6 +697,17 @@ const startServer = async () => {
         console.log('⚠️ Migration 49 warning:', error.message);
       }
 
+      // Migration 50: Add isClosed to kunchinittus (for Kunchinittu Close feature)
+      // SAFE: Only adds new columns with default values (is_closed = false)
+      try {
+        const addIsClosedToKunchinittus = require('./migrations/48_add_is_closed_to_kunchinittus');
+        const queryInterface = sequelize.getQueryInterface();
+        await addIsClosedToKunchinittus.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 50: isClosed fields added to kunchinittus');
+      } catch (error) {
+        console.log('⚠️ Migration 50 warning:', error.message);
+      }
+
       console.log('✅ Migrations completed.');
     } catch (error) {
       console.log('⚠️ Migrations warning:', error.message);
